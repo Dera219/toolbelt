@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # Matching defaults
     default_search_radius_km: float = 25.0
     max_search_radius_km: float = 100.0
+    # Storage
+    upload_dir: str = "./uploads"
     # Payments
     platform_fee_bps: int = 1500  # 15% take-rate on completed jobs
     payments_webhook_secret: str = "dev-webhook-secret-0123456789abcdef"

@@ -1,7 +1,8 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useCallback, useState } from "react";
-import { Text } from "react-native";
+import { Image, ScrollView, Text } from "react-native";
+import { API_URL } from "../config";
 import { ApiError, api, money } from "../api/client";
 import type { Job, JobRatings, Offer, Payment } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -83,6 +84,17 @@ export default function JobDetailScreen({ route, navigation }: Props) {
         {job.customer_provides_supplies && <Badge label="supplies provided" />}
       </Row>
       <Subtext>{job.address_text}</Subtext>
+      {job.photos.length > 0 && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {job.photos.map((photo) => (
+            <Image
+              key={photo.id}
+              source={{ uri: `${API_URL}${photo.url}` }}
+              style={{ width: 140, height: 140, borderRadius: 10, marginRight: 8 }}
+            />
+          ))}
+        </ScrollView>
+      )}
       {job.description !== "" && <Text style={{ color: colors.text }}>{job.description}</Text>}
       {job.budget_cents != null && (
         <Subtext>Budget: {money(job.budget_cents, job.currency)}</Subtext>

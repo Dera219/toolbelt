@@ -1,8 +1,9 @@
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import React, { useState } from "react";
-import { Switch } from "react-native";
+import { Image, Switch } from "react-native";
 import { ApiError, api } from "../../api/client";
 import { TRADES } from "../../config";
 import type { RootStackParamList } from "../../navigation";
@@ -16,8 +17,20 @@ export default function PostJobScreen() {
   const [address, setAddress] = useState("");
   const [budget, setBudget] = useState("");
   const [supplies, setSupplies] = useState(false);
+  const [photoUris, setPhotoUris] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const pickPhotos = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      allowsMultipleSelection: true,
+      selectionLimit: 8 - photoUris.length,
+      quality: 0.7,
+    });
+    if (!result.canceled)
+      setPhotoUris((prev) => [...prev, ...result.assets.map((a) => a.uri)].slice(0, 8));
+  };
 
   const submit = async () => {
     setError(null);
@@ -39,10 +52,14 @@ export default function PostJobScreen() {
         budget_cents: budgetCents,
         customer_provides_supplies: supplies,
       });
+      for (const uri of photoUris) {
+        await api.uploadJobPhoto(job.id, uri); // photos ride along after the job exists
+      }
       setTitle("");
       setDescription("");
       setAddress("");
       setBudget("");
+      setPhotoUris([]);
       navigation.navigate("JobDetail", { jobId: job.id });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not post job");
@@ -85,6 +102,22 @@ export default function PostJobScreen() {
         <Switch value={supplies} onValueChange={setSupplies} />
         <Subtext>I will provide supplies/materials</Subtext>
       </Row>
+      <Row>
+        {photoUris.map((uri) => (
+          <Image
+            key={uri}
+            source={{ uri }}
+            style={{ width: 64, height: 64, borderRadius: 8 }}
+          />
+        ))}
+      </Row>
+      {photoUris.length < 8 && (
+        <Button
+          label={photoUris.length ? "Add more photos" : "Add photos (helps workers price it)"}
+          variant="secondary"
+          onPress={pickPhotos}
+        />
+      )}
       <ErrorText message={error} />
       <Button
         label="Post job"

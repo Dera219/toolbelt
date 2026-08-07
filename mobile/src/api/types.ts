@@ -37,6 +37,11 @@ export interface WorkerProfile {
   jobs_completed: number;
 }
 
+export interface JobPhoto {
+  id: number;
+  url: string;
+}
+
 export interface Job {
   id: number;
   customer_id: number;
@@ -53,6 +58,7 @@ export interface Job {
   status: JobStatus;
   assigned_worker_id: number | null;
   created_at: string;
+  photos: JobPhoto[];
 }
 
 export interface NearbyJob extends Job {

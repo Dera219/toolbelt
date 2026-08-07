@@ -9,6 +9,7 @@ sys.path.insert(0, str(_API_DIR))
 os.environ["TOOLBELT_DATABASE_URL"] = f"sqlite:///{_TESTS_DIR / 'test_toolbelt.db'}"
 os.environ["TOOLBELT_JWT_SECRET"] = "test-secret-not-for-prod-0123456789abcdef"
 os.environ["TOOLBELT_ENVIRONMENT"] = "test"
+os.environ["TOOLBELT_UPLOAD_DIR"] = str(_TESTS_DIR / "test_uploads")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

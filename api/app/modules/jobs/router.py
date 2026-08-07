@@ -1,6 +1,7 @@
+import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from app.modules.jobs.schemas import (
     NearbyJobOut,
     OfferCreateIn,
     OfferOut,
+    PhotoOut,
 )
 
 router = APIRouter()
@@ -68,6 +70,43 @@ def my_jobs(
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: int, user: CurrentUser, db: DbDep):
     return service.get_job_for_viewer(db, job_id, user)
+
+
+_PHOTO_TYPES = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+_MAX_PHOTO_BYTES = 8 * 1024 * 1024
+_MAX_PHOTOS_PER_JOB = 8
+
+
+@router.post(
+    "/jobs/{job_id}/photos", response_model=PhotoOut, status_code=status.HTTP_201_CREATED
+)
+async def upload_job_photo(job_id: int, file: UploadFile, user: CurrentUser, db: DbDep):
+    from app.core.storage import get_storage
+    from app.modules.jobs.models import JobPhoto, JobStatus
+
+    job = service.get_job_for_viewer(db, job_id, user)
+    if job.customer_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Only the job owner adds photos")
+    if job.status not in (JobStatus.OPEN, JobStatus.ASSIGNED, JobStatus.IN_PROGRESS):
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Job is closed")
+    if len(job.photos) >= _MAX_PHOTOS_PER_JOB:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail="Photo limit reached")
+    ext = _PHOTO_TYPES.get(file.content_type or "")
+    if ext is None:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail="Use JPEG, PNG, or WebP"
+        )
+    data = await file.read()
+    if len(data) > _MAX_PHOTO_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Photo too large (8MB max)"
+        )
+    key = f"jobs/{job.id}/{uuid.uuid4().hex}.{ext}"
+    get_storage().save(key, data)
+    photo = JobPhoto(job_id=job.id, storage_key=key, content_type=file.content_type or "")
+    db.add(photo)
+    db.flush()
+    return photo
 
 
 @router.post("/jobs/{job_id}/offers", response_model=OfferOut, status_code=status.HTTP_201_CREATED)

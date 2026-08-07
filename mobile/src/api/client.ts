@@ -104,6 +104,22 @@ export const api = {
   completeJob: (id: number) => request<Job>("POST", `/jobs/${id}/complete`),
   cancelJob: (id: number) => request<Job>("POST", `/jobs/${id}/cancel`),
 
+  // photos
+  uploadJobPhoto: async (jobId: number, uri: string): Promise<void> => {
+    const name = uri.split("/").pop() ?? "photo.jpg";
+    const ext = name.split(".").pop()?.toLowerCase();
+    const type = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+    const form = new FormData();
+    // React Native FormData accepts {uri, name, type} file descriptors.
+    form.append("file", { uri, name, type } as unknown as Blob);
+    const resp = await fetch(`${API_URL}/jobs/${jobId}/photos`, {
+      method: "POST",
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+      body: form,
+    });
+    if (!resp.ok) throw new ApiError(resp.status, "Photo upload failed");
+  },
+
   // offers
   jobOffers: (jobId: number) => request<Offer[]>("GET", `/jobs/${jobId}/offers`),
   makeOffer: (jobId: number, price_cents: number, message: string) =>

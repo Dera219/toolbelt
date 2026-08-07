@@ -33,6 +33,13 @@ class JobCreateIn(BaseModel):
         return v.upper()
 
 
+class PhotoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    url: str
+
+
 class JobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -51,6 +58,7 @@ class JobOut(BaseModel):
     status: JobStatus
     assigned_worker_id: int | None
     created_at: datetime
+    photos: list[PhotoOut] = []
 
 
 class NearbyJobOut(JobOut):

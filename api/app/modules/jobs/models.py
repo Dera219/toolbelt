@@ -55,6 +55,9 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     offers: Mapped[list["Offer"]] = relationship(back_populates="job")
+    photos: Mapped[list["JobPhoto"]] = relationship(
+        back_populates="job", lazy="selectin", order_by="JobPhoto.id"
+    )
 
 
 class Offer(Base):
@@ -70,6 +73,24 @@ class Offer(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     job: Mapped[Job] = relationship(back_populates="offers")
+
+
+class JobPhoto(Base):
+    __tablename__ = "job_photos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"), index=True)
+    storage_key: Mapped[str] = mapped_column(String(200))
+    content_type: Mapped[str] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    job: Mapped[Job] = relationship(back_populates="photos")
+
+    @property
+    def url(self) -> str:
+        from app.core.storage import get_storage
+
+        return get_storage().public_url(self.storage_key)
 
 
 class JobEvent(Base):

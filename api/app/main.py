@@ -26,6 +26,14 @@ async def lifespan(_app: FastAPI):
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+
+if settings.environment != "prod":  # prod serves photos from S3/CDN, not the API
+    from pathlib import Path
+
+    from fastapi.staticfiles import StaticFiles
+
+    Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
 app.include_router(identity_router, tags=["identity"])
 app.include_router(jobs_router, tags=["jobs"])
 app.include_router(reputation_router, tags=["reputation"])

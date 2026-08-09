@@ -30,10 +30,21 @@ app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 if settings.environment != "prod":  # prod serves photos from S3/CDN, not the API
     from pathlib import Path
 
+    from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
 
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
+
+    # Lets the app run in a browser (expo start --web) during development.
+    # Production origins are explicit; never wildcard once real accounts exist.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 app.include_router(identity_router, tags=["identity"])
 app.include_router(jobs_router, tags=["jobs"])
 app.include_router(reputation_router, tags=["reputation"])

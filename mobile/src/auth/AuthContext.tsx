@@ -1,7 +1,7 @@
-import * as SecureStore from "expo-secure-store";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, setAuthToken } from "../api/client";
 import type { Role, User } from "../api/types";
+import { tokenStore } from "./storage";
 
 export type Mode = "customer" | "worker";
 const TOKEN_KEY = "toolbelt_token";
@@ -29,16 +29,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const token = await SecureStore.getItemAsync(TOKEN_KEY);
+        const token = await tokenStore.get(TOKEN_KEY);
         if (token) {
           setAuthToken(token);
           setUser(await api.me());
-          const savedMode = await SecureStore.getItemAsync(MODE_KEY);
+          const savedMode = await tokenStore.get(MODE_KEY);
           if (savedMode === "worker" || savedMode === "customer") setModeState(savedMode);
         }
       } catch {
         setAuthToken(null);
-        await SecureStore.deleteItemAsync(TOKEN_KEY);
+        await tokenStore.remove(TOKEN_KEY);
       } finally {
         setBooting(false);
       }
@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const { access_token } = await api.login(email, password);
     setAuthToken(access_token);
-    await SecureStore.setItemAsync(TOKEN_KEY, access_token);
+    await tokenStore.set(TOKEN_KEY, access_token);
     const me = await api.me();
     setUser(me);
     if (me.role === "worker") setModeState("worker");
@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     setAuthToken(null);
     setUser(null);
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
+    await tokenStore.remove(TOKEN_KEY);
   }, []);
 
   const refreshMe = useCallback(async () => {
@@ -74,7 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const setMode = useCallback((next: Mode) => {
     setModeState(next);
-    SecureStore.setItemAsync(MODE_KEY, next).catch(() => {});
+    tokenStore.set(MODE_KEY, next).catch(() => {});
   }, []);
 
   const canWork = user?.role === "worker" || user?.role === "both";

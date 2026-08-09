@@ -1,0 +1,247 @@
+<!doctype html>
+<!--
+  ────────────────────────────────────────────────────────────────────────────
+  DRAFT — NOT YET REVIEWED BY COUNSEL.
+  Grounded in what the ToolBelt codebase actually does, but this is a
+  marketplace that moves money to third parties and sends workers into
+  people's homes. Sections 2, 6, 12 and 13 (marketplace role, contractor
+  status, liability, indemnity) carry real exposure and must be reviewed by a
+  qualified lawyer before launch. Fill every [PLACEHOLDER] first.
+  ────────────────────────────────────────────────────────────────────────────
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Terms of Service — ToolBelt</title>
+<meta name="robots" content="index,follow">
+<style>
+  :root{--ink:#14161a;--ink-2:#2b2f36;--muted:#6b7280;--line:#e2e0db;--paper:#fbfaf7;--hi:#f0a202;--hi-deep:#c67c00}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);
+    font:16px/1.7 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:0 24px}
+  header{border-bottom:1px solid var(--line);background:rgba(251,250,247,.94);
+    position:sticky;top:0;backdrop-filter:blur(10px);z-index:20}
+  .bar{display:flex;align-items:center;height:64px;gap:10px}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:900;font-size:19px;
+    letter-spacing:-.03em;text-decoration:none;color:inherit}
+  .mark{width:24px;height:24px}
+  .back{margin-left:auto;font-size:14.5px;font-weight:600;color:var(--ink-2);text-decoration:none}
+  .back:hover{color:var(--ink)}
+  h1{font-size:clamp(30px,4.6vw,42px);letter-spacing:-.03em;line-height:1.12;margin:52px 0 8px}
+  .meta{color:var(--muted);font-size:14px;margin-bottom:34px;padding-bottom:26px;border-bottom:1px solid var(--line)}
+  h2{font-size:19px;letter-spacing:-.01em;margin:38px 0 10px;font-weight:800}
+  h2 span{color:var(--hi-deep);font-variant-numeric:tabular-nums}
+  p{margin:12px 0;color:var(--ink-2)}
+  ul{margin:12px 0 12px 22px;color:var(--ink-2)}
+  li{margin:6px 0}
+  strong{color:var(--ink)}
+  .callout{background:#fdf6e7;border:1px solid #f0dfb4;border-left:3px solid var(--hi);
+    border-radius:8px;padding:16px 18px;margin:20px 0}
+  .callout p{margin:0;color:#6b4e07}
+  mark{background:#fff2c9;padding:1px 5px;border-radius:3px;color:#6b4e07;font-weight:700}
+  .toc{background:#fff;border:1px solid var(--line);border-radius:11px;padding:20px 24px;margin:26px 0}
+  .toc ol{margin:8px 0 0 20px;columns:2;column-gap:30px}
+  .toc li{margin:3px 0;font-size:14.5px}
+  .toc a{color:var(--ink-2);text-decoration:none}
+  .toc a:hover{text-decoration:underline}
+  footer{border-top:1px solid var(--line);margin-top:56px;padding:30px 0 60px;
+    font-size:13.5px;color:var(--muted)}
+  footer a{color:var(--ink-2);font-weight:600;text-decoration:none}
+  @media(max-width:640px){.toc ol{columns:1}}
+</style>
+</head>
+<body>
+
+<header><div class="wrap bar">
+  <a class="logo" href="/index.html">
+    <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="1.5" y="7" width="21" height="12.5" rx="2.5" fill="#14161a"/>
+      <path d="M8 7V5.4A2.4 2.4 0 0 1 10.4 3h3.2A2.4 2.4 0 0 1 16 5.4V7" stroke="#14161a" stroke-width="2.1" stroke-linecap="round"/>
+      <rect x="1.5" y="11.4" width="21" height="2.6" fill="#f0a202"/>
+    </svg>ToolBelt</a>
+  <a class="back" href="/index.html">← Back to site</a>
+</div></header>
+
+<div class="wrap">
+  <h1>Terms of Service</h1>
+  <p class="meta">Last updated <mark>[DATE]</mark> · Operated by <mark>[LEGAL ENTITY NAME]</mark></p>
+
+  <div class="toc"><strong style="font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">Contents</strong>
+    <ol>
+      <li><a href="#s1">Agreement</a></li>
+      <li><a href="#s2">What ToolBelt is</a></li>
+      <li><a href="#s3">Eligibility</a></li>
+      <li><a href="#s4">Accounts</a></li>
+      <li><a href="#s5">Customers</a></li>
+      <li><a href="#s6">Workers</a></li>
+      <li><a href="#s7">Payments &amp; fees</a></li>
+      <li><a href="#s8">Cancellations &amp; refunds</a></li>
+      <li><a href="#s9">Licensed trades</a></li>
+      <li><a href="#s10">Conduct</a></li>
+      <li><a href="#s11">Ratings &amp; content</a></li>
+      <li><a href="#s12">Disclaimers</a></li>
+      <li><a href="#s13">Liability &amp; indemnity</a></li>
+      <li><a href="#s14">Disputes</a></li>
+      <li><a href="#s15">Suspension</a></li>
+      <li><a href="#s16">Changes</a></li>
+      <li><a href="#s17">Governing law</a></li>
+      <li><a href="#s18">Contact</a></li>
+    </ol>
+  </div>
+
+  <h2 id="s1"><span>1.</span> Agreement to these terms</h2>
+  <p>These Terms of Service govern your use of ToolBelt, a marketplace operated by
+  <mark>[LEGAL ENTITY NAME]</mark> ("ToolBelt", "we", "us"). By creating an account or using
+  the service you agree to these terms. If you do not agree, do not use ToolBelt.</p>
+
+  <h2 id="s2"><span>2.</span> What ToolBelt is — and is not</h2>
+  <p>ToolBelt is a <strong>marketplace</strong>. We connect customers who need home and property
+  work done with independent local workers who perform it. We provide the platform, the
+  payment mechanism, and the trust and safety systems.</p>
+  <p><strong>ToolBelt does not perform any of the work.</strong> We are not a cleaning company,
+  moving company, or contractor. We do not employ, supervise, direct, or control the workers
+  listed on the platform, and we do not guarantee the quality, safety, timing, or legality of
+  any work performed.</p>
+  <div class="callout"><p><strong>Plainly:</strong> the contract for the work itself is between
+  the customer and the worker. ToolBelt facilitates that relationship and handles the payment,
+  but is not a party to the work agreement.</p></div>
+
+  <h2 id="s3"><span>3.</span> Eligibility</h2>
+  <p>You must be at least 18 years old and legally able to enter contracts. Workers must be
+  legally permitted to perform the work they offer in their jurisdiction, and must hold any
+  license, permit, registration, or insurance that jurisdiction requires.</p>
+
+  <h2 id="s4"><span>4.</span> Your account</h2>
+  <p>You must give accurate information and keep it current. You are responsible for activity
+  under your account and for keeping your credentials secure. We verify phone numbers by SMS;
+  you consent to receiving verification messages and transactional notifications about your
+  jobs. One person, one account — accounts are not transferable.</p>
+
+  <h2 id="s5"><span>5.</span> If you are a customer</h2>
+  <ul>
+    <li>Describe the job accurately, including access, hazards, and anything affecting the price.</li>
+    <li>Accepting an offer forms an agreement with that worker at the quoted price.</li>
+    <li>Provide safe access to the property at the agreed time.</li>
+    <li>Confirm completion promptly once the work is done. Do not withhold confirmation of work
+        that was genuinely completed.</li>
+    <li>Pay through ToolBelt. Arranging payment outside the platform for a job introduced by
+        ToolBelt is a breach of these terms and removes every protection described here.</li>
+  </ul>
+
+  <h2 id="s6"><span>6.</span> If you are a worker</h2>
+  <p><strong>You are an independent contractor</strong>, not an employee, partner, or agent of
+  ToolBelt. Nothing here creates an employment relationship. You control how, when, and whether
+  you work, and which jobs you offer on.</p>
+  <ul>
+    <li>You are solely responsible for your own taxes, insurance, licensing, tools, and equipment.</li>
+    <li>You must hold every license and permit your jurisdiction requires for the work you accept.</li>
+    <li>Quote honestly and complete work you accept to a professional standard.</li>
+    <li>You may not subcontract a job to someone who has not been vetted through ToolBelt.</li>
+    <li>ToolBelt does not guarantee any volume of work, income, or job availability.</li>
+  </ul>
+
+  <h2 id="s7"><span>7.</span> Payments and fees</h2>
+  <ul>
+    <li>Payments are processed by <strong>Stripe</strong>. By using ToolBelt you also agree to
+        Stripe's applicable terms.</li>
+    <li>When a customer accepts an offer, the customer's payment method is <strong>authorized</strong>
+        for the agreed amount. This places a hold; it is not a charge.</li>
+    <li>Funds are <strong>captured</strong> when the job is confirmed complete.</li>
+    <li>ToolBelt retains a <strong>15% service fee</strong> on the job price. The worker receives
+        the remaining 85%, paid out to their connected Stripe account.</li>
+    <li>Posting a job, browsing, and sending offers are free. The fee applies only to completed jobs.</li>
+    <li>Fees may change on notice. Changes never apply to a job already accepted.</li>
+  </ul>
+
+  <h2 id="s8"><span>8.</span> Cancellations and refunds</h2>
+  <ul>
+    <li>Cancelling before work begins releases the authorization hold, and the customer is not charged.</li>
+    <li>If work is incomplete, defective, or not as described, raise it through the platform
+        rather than confirming completion.</li>
+    <li>We may issue a full or partial refund after reviewing the job record, messages, and any
+        evidence provided. Our determination on platform refunds is final.</li>
+    <li>Repeated cancellations by either side may result in suspension.</li>
+  </ul>
+
+  <h2 id="s9"><span>9.</span> Licensed trades are excluded</h2>
+  <p>ToolBelt currently supports cleaning, moving, handyman work, furniture assembly, yard work,
+  and painting. <strong>Electrical, plumbing, and HVAC work may not be offered or requested</strong>
+  through the platform until our license-verification process is in place. Offering or requesting
+  regulated work is a breach of these terms and may result in immediate termination.</p>
+
+  <h2 id="s10"><span>10.</span> Prohibited conduct</h2>
+  <ul>
+    <li>Impersonating anyone, or creating an account with false information.</li>
+    <li>Taking a ToolBelt-introduced job off-platform to avoid fees.</li>
+    <li>Harassment, discrimination, threats, or unsafe behavior toward any user.</li>
+    <li>Using the platform for anything illegal, or requesting work that is illegal.</li>
+    <li>Manipulating ratings, or offering anything in exchange for a rating.</li>
+    <li>Scraping, reverse engineering, or interfering with the service or its security.</li>
+    <li>Using another user's contact details for anything other than the job at hand.</li>
+  </ul>
+
+  <h2 id="s11"><span>11.</span> Ratings, reviews, and your content</h2>
+  <p>Ratings are double-blind: neither party sees the other's rating until both are submitted.
+  Ratings and reviews must be honest and based on a real completed job.</p>
+  <p>You keep ownership of content you submit — job descriptions, photos, messages, reviews. You
+  grant ToolBelt a non-exclusive, worldwide, royalty-free licence to host, display, and use that
+  content to operate and promote the service. We may remove content that breaches these terms.</p>
+
+  <h2 id="s12"><span>12.</span> Disclaimers</h2>
+  <p>The service is provided <strong>"as is" and "as available"</strong> without warranties of any
+  kind, express or implied, to the fullest extent permitted by law.</p>
+  <p>We vet workers before they can take jobs, but <strong>vetting is not a guarantee</strong>. We
+  do not warrant the conduct, honesty, competence, or safety of any user. You are responsible for
+  your own judgment about whom you allow into your property and whose work you accept.</p>
+
+  <h2 id="s13"><span>13.</span> Limitation of liability and indemnity</h2>
+  <p>To the maximum extent permitted by law, ToolBelt is not liable for indirect, incidental,
+  special, consequential, or punitive damages, or for lost profits, data, or goodwill, arising
+  from your use of the service or from any interaction between users.</p>
+  <p>Our total aggregate liability for any claim relating to a job is limited to the greater of
+  the service fee we received on that job or <mark>[LIABILITY CAP, e.g. USD 100]</mark>.</p>
+  <p>You agree to indemnify and hold ToolBelt harmless from claims, damages, and reasonable legal
+  costs arising from your use of the service, your breach of these terms, work you performed or
+  received, or your violation of any law or third-party right.</p>
+  <div class="callout"><p>Some jurisdictions do not allow certain limitations of liability. Where
+  that is the case, the limitations above apply only to the extent permitted, and nothing here
+  limits liability that cannot lawfully be limited.</p></div>
+
+  <h2 id="s14"><span>14.</span> Disputes between users</h2>
+  <p>Disputes about the work itself are between the customer and the worker. We will review the
+  job record and may issue a platform refund, but we are not obliged to mediate and are not
+  responsible for the outcome of any dispute between users.</p>
+
+  <h2 id="s15"><span>15.</span> Suspension and termination</h2>
+  <p>You may close your account at any time. We may suspend or terminate an account that breaches
+  these terms, poses a safety risk, or is suspected of fraud — with notice where practical, and
+  immediately where necessary. Obligations for completed jobs, including payment and fees, survive
+  termination.</p>
+
+  <h2 id="s16"><span>16.</span> Changes to these terms</h2>
+  <p>We may update these terms. Material changes will be notified by email or in-app before they
+  take effect. Continued use after that constitutes acceptance. The "last updated" date above
+  always reflects the current version.</p>
+
+  <h2 id="s17"><span>17.</span> Governing law</h2>
+  <p>These terms are governed by the laws of <mark>[STATE/COUNTRY]</mark>, without regard to
+  conflict-of-law rules. Courts located in <mark>[JURISDICTION]</mark> have exclusive jurisdiction,
+  except where mandatory consumer-protection law gives you the right to bring proceedings locally.</p>
+
+  <h2 id="s18"><span>18.</span> Contact</h2>
+  <p><mark>[LEGAL ENTITY NAME]</mark><br><mark>[BUSINESS ADDRESS]</mark><br>
+  <a href="mailto:[CONTACT EMAIL]" style="color:var(--ink-2);font-weight:600">[CONTACT EMAIL]</a></p>
+</div>
+
+<footer><div class="wrap">
+  <a href="/index.html">Home</a> · <a href="/privacy.html">Privacy Policy</a> ·
+  <a href="mailto:[CONTACT EMAIL]">Contact</a>
+  <p style="margin-top:10px">© <span id="yr">2026</span> <mark>[LEGAL ENTITY NAME]</mark>. ToolBelt is a
+  marketplace; workers are independent contractors and not employees of ToolBelt.</p>
+</div></footer>
+<script>document.getElementById('yr').textContent=new Date().getFullYear();</script>
+</body>
+</html>

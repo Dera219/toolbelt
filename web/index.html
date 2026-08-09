@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ToolBelt — Hire trusted local help, pay when it's done</title>
+<meta name="description" content="ToolBelt connects you with vetted local workers for cleaning, moving, handyman work, assembly, yard work, and painting. Post a job, compare offers, pay only when the work is complete.">
+<style>
+  :root{
+    --ink:#14161a; --ink-2:#2b2f36; --muted:#6b7280; --line:#e2e0db;
+    --paper:#fbfaf7; --panel:#ffffff; --hi:#f0a202; --hi-deep:#c67c00; --ok:#1f7a4d;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--paper);color:var(--ink);
+    font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+  a{color:inherit}
+  h1,h2,h3{letter-spacing:-.025em;line-height:1.12;font-weight:800}
+  h1{font-size:clamp(38px,6.2vw,68px)}
+  h2{font-size:clamp(27px,3.6vw,38px);margin-bottom:14px}
+  h3{font-size:19px;font-weight:700;letter-spacing:-.01em}
+  .lead{font-size:clamp(17px,2vw,20px);color:var(--ink-2);max-width:56ch}
+  .eyebrow{font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--hi-deep);margin-bottom:12px}
+
+  /* header */
+  header{position:sticky;top:0;z-index:50;background:rgba(251,250,247,.92);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .bar{display:flex;align-items:center;gap:28px;height:66px}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:900;letter-spacing:-.03em;font-size:19px}
+  .mark{width:24px;height:24px;flex:none}
+  nav{margin-left:auto;display:flex;gap:26px;align-items:center}
+  nav a{text-decoration:none;font-size:14.5px;font-weight:600;color:var(--ink-2)}
+  nav a:hover{color:var(--ink)}
+  .btn{display:inline-block;text-decoration:none;font-weight:700;font-size:15px;
+    padding:12px 22px;border-radius:8px;border:2px solid transparent;transition:.15s}
+  .btn-primary{background:var(--hi);color:#231a04;border-color:var(--hi)}
+  .btn-primary:hover{background:var(--hi-deep);border-color:var(--hi-deep);color:#fff}
+  .btn-ghost{border-color:var(--ink);color:var(--ink)}
+  .btn-ghost:hover{background:var(--ink);color:var(--paper)}
+  .btn-sm{padding:9px 16px;font-size:14px}
+  @media(max-width:760px){nav a:not(.btn){display:none}}
+
+  /* hero */
+  .hero{padding:76px 0 64px;position:relative;overflow:hidden}
+  .hero .stripe-accent{position:absolute;inset:0 0 auto 0;height:5px;
+    background:repeating-linear-gradient(135deg,var(--hi) 0 22px,var(--ink) 22px 44px);opacity:.9}
+  .hero-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:52px;align-items:center}
+  @media(max-width:880px){.hero-grid{grid-template-columns:1fr;gap:38px}}
+  .hero h1 span{color:var(--hi-deep)}
+  .cta-row{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}
+  .note{margin-top:16px;font-size:14px;color:var(--muted)}
+
+  /* job card visual */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 1px 2px rgba(20,22,26,.05),0 12px 32px -18px rgba(20,22,26,.28)}
+  .job{padding:20px 22px}
+  .job-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+    padding-bottom:14px;border-bottom:1px solid var(--line)}
+  .tag{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+    background:#f4f2ec;border:1px solid var(--line);padding:4px 9px;border-radius:5px;color:var(--ink-2)}
+  .offer{display:flex;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid var(--line)}
+  .offer:last-of-type{border-bottom:0}
+  .av{width:36px;height:36px;border-radius:50%;flex:none;display:grid;place-items:center;
+    font-weight:800;font-size:13px;color:#fff;background:var(--ink-2)}
+  .av.b{background:var(--hi-deep)}.av.c{background:var(--ok)}
+  .price{margin-left:auto;font-weight:800;font-size:16px}
+  .stars{font-size:12px;color:var(--muted)}
+  .escrow{margin-top:14px;padding:11px 13px;border-radius:8px;background:#f2f8f4;
+    border:1px solid #cfe6d8;font-size:13px;color:#14532d;display:flex;gap:8px;align-items:center}
+
+  /* sections */
+  section{padding:72px 0;border-top:1px solid var(--line)}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:36px}
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:34px}
+  @media(max-width:880px){.grid-3{grid-template-columns:1fr}.grid-4{grid-template-columns:repeat(2,1fr)}}
+  .step{padding:24px}
+  .num{width:30px;height:30px;border-radius:7px;background:var(--ink);color:var(--hi);
+    display:grid;place-items:center;font-weight:800;font-size:14px;margin-bottom:14px}
+  .step p{color:var(--ink-2);font-size:15px;margin-top:6px}
+
+  .trade{padding:18px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:11px}
+  .trade .ic{font-size:23px;line-height:1;margin-bottom:9px}
+  .trade b{font-size:15.5px;display:block}
+  .trade small{color:var(--muted);font-size:13px}
+  .soon{margin-top:24px;padding:15px 18px;border-radius:10px;background:#fdf6e7;
+    border:1px solid #f0dfb4;font-size:14.5px;color:#6b4e07}
+
+  /* pricing */
+  .price-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:34px}
+  @media(max-width:880px){.price-grid{grid-template-columns:1fr}}
+  .pcard{padding:28px}
+  .big{font-size:44px;font-weight:900;letter-spacing:-.04em;line-height:1}
+  .big small{font-size:16px;font-weight:700;color:var(--muted);letter-spacing:0}
+  .plist{list-style:none;margin-top:18px;display:grid;gap:9px}
+  .plist li{font-size:15px;padding-left:26px;position:relative;color:var(--ink-2)}
+  .plist li::before{content:"";position:absolute;left:0;top:8px;width:14px;height:8px;
+    border-left:2.5px solid var(--ok);border-bottom:2.5px solid var(--ok);transform:rotate(-45deg)}
+
+  /* trust */
+  .trust{display:grid;grid-template-columns:repeat(2,1fr);gap:20px;margin-top:34px}
+  @media(max-width:880px){.trust{grid-template-columns:1fr}}
+  .t-item{display:flex;gap:14px;padding:20px;background:var(--panel);
+    border:1px solid var(--line);border-radius:11px}
+  .t-item .ic{font-size:20px;flex:none}
+  .t-item p{font-size:14.5px;color:var(--ink-2);margin-top:4px}
+
+  /* worker band */
+  .band{background:var(--ink);color:#f5f3ee;border-radius:16px;padding:44px;margin-top:8px}
+  .band h2{color:#fff}
+  .band .lead{color:#c9c6bd}
+  .band .plist li{color:#c9c6bd}
+  .band .plist li::before{border-color:var(--hi)}
+  .band-grid{display:grid;grid-template-columns:1fr 1fr;gap:36px;align-items:center}
+  @media(max-width:880px){.band-grid{grid-template-columns:1fr;gap:26px}.band{padding:30px}}
+
+  /* faq */
+  details{border-bottom:1px solid var(--line);padding:17px 0}
+  summary{font-weight:700;cursor:pointer;font-size:16.5px;list-style:none;
+    display:flex;justify-content:space-between;gap:16px;align-items:center}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";font-size:22px;font-weight:400;color:var(--muted);flex:none}
+  details[open] summary::after{content:"–"}
+  details p{margin-top:10px;color:var(--ink-2);font-size:15px;max-width:70ch}
+
+  footer{border-top:1px solid var(--line);padding:44px 0 56px;font-size:14px;color:var(--muted)}
+  .f-grid{display:flex;gap:34px;flex-wrap:wrap;align-items:flex-start}
+  .f-grid nav{margin-left:auto;gap:22px;flex-wrap:wrap}
+  footer a{color:var(--ink-2);text-decoration:none;font-weight:600}
+  footer a:hover{text-decoration:underline}
+  .legal{margin-top:26px;padding-top:20px;border-top:1px solid var(--line);font-size:13px;line-height:1.7}
+  mark{background:#fff2c9;padding:1px 5px;border-radius:3px;color:#6b4e07;font-weight:700}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="logo" href="#top">
+      <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="1.5" y="7" width="21" height="12.5" rx="2.5" fill="#14161a"/>
+        <path d="M8 7V5.4A2.4 2.4 0 0 1 10.4 3h3.2A2.4 2.4 0 0 1 16 5.4V7" stroke="#14161a" stroke-width="2.1" stroke-linecap="round"/>
+        <rect x="1.5" y="11.4" width="21" height="2.6" fill="#f0a202"/>
+      </svg>
+      ToolBelt
+    </a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#trades">Trades</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#workers">For workers</a>
+      <a class="btn btn-primary btn-sm" href="#get-started">Post a job</a>
+    </nav>
+  </div>
+</header>
+
+<div id="top" class="hero">
+  <div class="stripe-accent"></div>
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Local trades, on demand</p>
+      <h1>Get it done.<br>Pay when <span>it's finished.</span></h1>
+      <p class="lead" style="margin-top:20px">
+        Post the job, compare real offers from vetted local workers, and pick the one you want.
+        Your card is only charged once the work is complete.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#get-started">Post a job — free</a>
+        <a class="btn btn-ghost" href="#workers">Work with ToolBelt</a>
+      </div>
+      <p class="note">No booking fee. No subscription. No charge until the job is done.</p>
+    </div>
+
+    <div class="card job" role="img" aria-label="Example job with three worker offers">
+      <div class="job-top">
+        <div>
+          <h3>2-bedroom apartment move</h3>
+          <p style="font-size:13.5px;color:var(--muted);margin-top:3px">Saturday · 3 offers</p>
+        </div>
+        <span class="tag">Moving</span>
+      </div>
+      <div class="offer">
+        <div class="av">MR</div>
+        <div><b style="font-size:14.5px">Marcus R.</b><div class="stars">★ 4.9 · 128 jobs</div></div>
+        <div class="price">$240</div>
+      </div>
+      <div class="offer">
+        <div class="av b">DT</div>
+        <div><b style="font-size:14.5px">Denise T.</b><div class="stars">★ 4.8 · 74 jobs</div></div>
+        <div class="price">$265</div>
+      </div>
+      <div class="offer">
+        <div class="av c">AK</div>
+        <div><b style="font-size:14.5px">Andre K.</b><div class="stars">★ 5.0 · 41 jobs</div></div>
+        <div class="price">$290</div>
+      </div>
+      <div class="escrow">
+        <span aria-hidden="true">🔒</span>
+        <span>Payment is held securely and released to the worker after you confirm the job is complete.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<section id="how">
+  <div class="wrap">
+    <p class="eyebrow">How it works</p>
+    <h2>Four steps, no phone tag</h2>
+    <p class="lead">Most people spend more time chasing quotes than the job takes. This replaces that.</p>
+    <div class="grid-4">
+      <div class="card step"><div class="num">1</div><h3>Post the job</h3>
+        <p>Describe what you need and when. Add photos so workers can quote accurately.</p></div>
+      <div class="card step"><div class="num">2</div><h3>Compare offers</h3>
+        <p>Nearby vetted workers send a price and a time. You see their rating and job history.</p></div>
+      <div class="card step"><div class="num">3</div><h3>Accept one</h3>
+        <p>Pick your worker. Your card is authorized but not charged, and you can message in-app.</p></div>
+      <div class="card step"><div class="num">4</div><h3>Pay on completion</h3>
+        <p>Confirm the work is done and payment is released. Then you both leave a rating.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="trades">
+  <div class="wrap">
+    <p class="eyebrow">What you can book</p>
+    <h2>Everyday jobs, done properly</h2>
+    <div class="grid-4">
+      <div class="trade"><div class="ic">🧽</div><b>Cleaning</b><small>Homes, move-outs, deep cleans</small></div>
+      <div class="trade"><div class="ic">📦</div><b>Moving</b><small>Apartments, single items, loading</small></div>
+      <div class="trade"><div class="ic">🔧</div><b>Handyman</b><small>Repairs, mounting, odd jobs</small></div>
+      <div class="trade"><div class="ic">🪛</div><b>Assembly</b><small>Flat-pack furniture, equipment</small></div>
+      <div class="trade"><div class="ic">🌿</div><b>Yard work</b><small>Mowing, leaves, hauling, cleanup</small></div>
+      <div class="trade"><div class="ic">🎨</div><b>Painting</b><small>Rooms, touch-ups, fences</small></div>
+    </div>
+    <div class="soon">
+      <strong>Electrical, plumbing, and HVAC are not bookable yet.</strong>
+      These trades require licensed professionals, and we do not list them until our
+      license-verification process is in place. We would rather be missing a category
+      than send an unlicensed worker to do regulated work.
+    </div>
+  </div>
+</section>
+
+<section id="pricing">
+  <div class="wrap">
+    <p class="eyebrow">Pricing</p>
+    <h2>You see the price before you commit</h2>
+    <p class="lead">Workers set their own prices. There is no markup added at checkout and no charge for posting.</p>
+    <div class="price-grid">
+      <div class="card pcard">
+        <h3 style="margin-bottom:12px">For customers</h3>
+        <div class="big">Free <small>to post &amp; compare</small></div>
+        <ul class="plist">
+          <li>No booking fee and no subscription</li>
+          <li>You pay the worker's quoted price — nothing added</li>
+          <li>Card authorized on accept, charged on completion</li>
+          <li>Cancel before work starts and the hold is released</li>
+        </ul>
+      </div>
+      <div class="card pcard">
+        <h3 style="margin-bottom:12px">For workers</h3>
+        <div class="big">15% <small>service fee per completed job</small></div>
+        <ul class="plist">
+          <li>Free to join, browse, and send offers</li>
+          <li>Fee only applies to jobs you actually complete</li>
+          <li>You keep 85% of your quoted price</li>
+          <li>Paid out to your bank after job completion</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <p class="eyebrow">Trust &amp; safety</p>
+    <h2>Built for letting a stranger into your home</h2>
+    <p class="lead">That is a high bar, and it is the bar this product is designed against.</p>
+    <div class="trust">
+      <div class="t-item"><div class="ic">🪪</div><div><h3>Every worker is vetted</h3>
+        <p>Workers pass an identity and eligibility review before they can take jobs. Vetting status is visible on every profile.</p></div></div>
+      <div class="t-item"><div class="ic">📱</div><div><h3>Verified phone numbers</h3>
+        <p>Both sides verify by SMS before posting or offering, so accounts trace back to a real number.</p></div></div>
+      <div class="t-item"><div class="ic">⭐</div><div><h3>Double-blind ratings</h3>
+        <p>Neither side sees the other's rating until both are submitted, so nobody rates defensively.</p></div></div>
+      <div class="t-item"><div class="ic">💬</div><div><h3>Private in-app messaging</h3>
+        <p>Coordinate without sharing your phone number or address until you have accepted an offer.</p></div></div>
+      <div class="t-item"><div class="ic">🔒</div><div><h3>Payment protection</h3>
+        <p>Funds are authorized up front and only released after you confirm completion. Refunds are handled in-app.</p></div></div>
+      <div class="t-item"><div class="ic">🧾</div><div><h3>Every job on record</h3>
+        <p>Price, messages, and status are logged, so a dispute is resolved from a record rather than memory.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="workers">
+  <div class="wrap">
+    <div class="band">
+      <div class="band-grid">
+        <div>
+          <p class="eyebrow" style="color:var(--hi)">For workers</p>
+          <h2>Your skills. Your prices. Your schedule.</h2>
+          <p class="lead">No bidding wars to the bottom and no paying for leads that go nowhere.
+            You see the job, you quote it, you get paid when it is done.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#get-started">Join as a worker</a>
+          </div>
+        </div>
+        <ul class="plist">
+          <li>Free to join — no lead fees, ever</li>
+          <li>You set your own price on every job</li>
+          <li>Only pay 15% on work you actually complete</li>
+          <li>Jobs near you, filtered to your trades</li>
+          <li>Payment guaranteed by the platform once the job is confirmed</li>
+          <li>Build a rating that follows you</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <p class="eyebrow">Questions</p>
+    <h2>Straight answers</h2>
+    <div style="margin-top:28px">
+      <details open><summary>When am I actually charged?</summary>
+        <p>Your card is authorized when you accept a worker's offer, which places a hold but does not
+        take the money. The charge happens only when the job is marked complete. If the job is
+        cancelled beforehand, the hold is released.</p></details>
+      <details><summary>What if the work isn't done properly?</summary>
+        <p>Do not confirm completion. Raise it in the app and we will review the job record and
+        messages. Refunds, full or partial, are issued through the platform.</p></details>
+      <details><summary>Who are the workers?</summary>
+        <p>Independent local contractors, not ToolBelt employees. Each passes identity and
+        eligibility vetting and verifies a phone number before taking work.</p></details>
+      <details><summary>Why can't I book an electrician or plumber?</summary>
+        <p>Those trades require licensing, and we do not list them until license verification is
+        built. Listing an unlicensed worker for regulated work would put customers at risk.</p></details>
+      <details><summary>How do workers get paid?</summary>
+        <p>Payouts go to the worker's bank account after the job is confirmed complete, minus the
+        15% service fee. Payments and payouts are processed by Stripe.</p></details>
+      <details><summary>Where is ToolBelt available?</summary>
+        <p>We are launching in <mark>[LAUNCH CITY]</mark> first and expanding from there. Join the
+        list and we will tell you when we reach your area.</p></details>
+    </div>
+  </div>
+</section>
+
+<section id="get-started">
+  <div class="wrap" style="text-align:center">
+    <h2>Launching in <mark>[LAUNCH CITY]</mark></h2>
+    <p class="lead" style="margin:14px auto 0">
+      We are onboarding our first customers and workers now. Leave your email and we will
+      reach out when we open in your area.
+    </p>
+    <div class="cta-row" style="justify-content:center">
+      <a class="btn btn-primary" href="mailto:[CONTACT EMAIL]?subject=ToolBelt%20—%20I%20need%20a%20job%20done">I need a job done</a>
+      <a class="btn btn-ghost" href="mailto:[CONTACT EMAIL]?subject=ToolBelt%20—%20I%20want%20to%20work">I want to work</a>
+    </div>
+    <p class="note">Or email us directly at <a href="mailto:[CONTACT EMAIL]" style="color:var(--ink-2);font-weight:600">[CONTACT EMAIL]</a></p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="f-grid">
+      <div style="max-width:34ch">
+        <div class="logo" style="font-size:17px;margin-bottom:9px">
+          <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="1.5" y="7" width="21" height="12.5" rx="2.5" fill="#14161a"/>
+            <path d="M8 7V5.4A2.4 2.4 0 0 1 10.4 3h3.2A2.4 2.4 0 0 1 16 5.4V7" stroke="#14161a" stroke-width="2.1" stroke-linecap="round"/>
+            <rect x="1.5" y="11.4" width="21" height="2.6" fill="#f0a202"/>
+          </svg>
+          ToolBelt
+        </div>
+        <p>An on-demand marketplace connecting customers with vetted local workers for home and
+           property jobs.</p>
+      </div>
+      <nav>
+        <a href="#how">How it works</a>
+        <a href="#trades">Trades</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#workers">For workers</a>
+        <a href="/terms.html">Terms</a>
+        <a href="/privacy.html">Privacy</a>
+        <a href="mailto:[CONTACT EMAIL]">Contact</a>
+      </nav>
+    </div>
+    <div class="legal">
+      <p>ToolBelt is a marketplace. Workers listed on ToolBelt are independent contractors and are
+      not employees or agents of ToolBelt. Payments and payouts are processed by Stripe.
+      Electrical, plumbing, and HVAC services are not offered pending license verification.</p>
+      <p style="margin-top:9px">© <span id="yr">2026</span> <mark>[LEGAL ENTITY NAME]</mark> ·
+      <mark>[BUSINESS ADDRESS]</mark> · <a href="mailto:[CONTACT EMAIL]">[CONTACT EMAIL]</a></p>
+    </div>
+  </div>
+</footer>
+
+<script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
+</body>
+</html>

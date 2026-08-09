@@ -17,6 +17,14 @@ function resolveApiUrl(): string {
 
   const hostUri = Constants.expoConfig?.hostUri ?? Constants.expoGoConfig?.debuggerHost;
   const host = hostUri?.split(":")[0];
+
+  // Tunnel mode (networks that block phone→Mac traffic): Expo publishes Metro at
+  // <id>-anonymous-8081.exp.direct. The API is tunneled on the sibling -8000 name,
+  // over https on the default port. See infra/tunnel-api.sh.
+  if (host?.endsWith(".exp.direct")) {
+    return `https://${host.replace(`-${8081}.`, `-${API_PORT}.`)}`;
+  }
+
   if (host && host !== "localhost" && host !== "127.0.0.1") {
     return `http://${host}:${API_PORT}`;
   }

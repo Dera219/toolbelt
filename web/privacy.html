@@ -1,0 +1,212 @@
+<!doctype html>
+<!--
+  ────────────────────────────────────────────────────────────────────────────
+  DRAFT — NOT YET REVIEWED BY COUNSEL.
+  Every collection claim below was derived from the actual SQLAlchemy models
+  (identity, jobs, chat, payments, reputation) as of 2026-07-29. If those
+  models change — especially if you add background checks, device IDs,
+  analytics SDKs, or background location — this document becomes inaccurate
+  and must be updated. An inaccurate privacy policy is a regulatory problem,
+  not a copy problem.
+  Verify §9 (retention windows) and §10 (rights) against the jurisdictions you
+  actually operate in. Fill every [PLACEHOLDER].
+  ────────────────────────────────────────────────────────────────────────────
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy — ToolBelt</title>
+<meta name="robots" content="index,follow">
+<style>
+  :root{--ink:#14161a;--ink-2:#2b2f36;--muted:#6b7280;--line:#e2e0db;--paper:#fbfaf7;--hi:#f0a202;--hi-deep:#c67c00;--ok:#1f7a4d}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);
+    font:16px/1.7 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:0 24px}
+  header{border-bottom:1px solid var(--line);background:rgba(251,250,247,.94);
+    position:sticky;top:0;backdrop-filter:blur(10px);z-index:20}
+  .bar{display:flex;align-items:center;height:64px;gap:10px}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:900;font-size:19px;
+    letter-spacing:-.03em;text-decoration:none;color:inherit}
+  .mark{width:24px;height:24px}
+  .back{margin-left:auto;font-size:14.5px;font-weight:600;color:var(--ink-2);text-decoration:none}
+  h1{font-size:clamp(30px,4.6vw,42px);letter-spacing:-.03em;line-height:1.12;margin:52px 0 8px}
+  .meta{color:var(--muted);font-size:14px;margin-bottom:30px;padding-bottom:26px;border-bottom:1px solid var(--line)}
+  h2{font-size:19px;letter-spacing:-.01em;margin:38px 0 10px;font-weight:800}
+  h2 span{color:var(--hi-deep);font-variant-numeric:tabular-nums}
+  p{margin:12px 0;color:var(--ink-2)}
+  ul{margin:12px 0 12px 22px;color:var(--ink-2)}
+  li{margin:6px 0}
+  strong{color:var(--ink)}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14.5px}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);font-weight:700;padding:8px 12px 8px 0;border-bottom:1.5px solid var(--line)}
+  td{padding:10px 12px 10px 0;border-bottom:1px solid var(--line);vertical-align:top;color:var(--ink-2)}
+  td:first-child{font-weight:600;color:var(--ink);white-space:nowrap}
+  .callout{background:#fdf6e7;border:1px solid #f0dfb4;border-left:3px solid var(--hi);
+    border-radius:8px;padding:16px 18px;margin:20px 0}
+  .callout p{margin:0;color:#6b4e07}
+  .good{background:#f2f8f4;border:1px solid #cfe6d8;border-left:3px solid var(--ok);
+    border-radius:8px;padding:16px 18px;margin:20px 0}
+  .good p{margin:0;color:#14532d}
+  mark{background:#fff2c9;padding:1px 5px;border-radius:3px;color:#6b4e07;font-weight:700}
+  footer{border-top:1px solid var(--line);margin-top:56px;padding:30px 0 60px;font-size:13.5px;color:var(--muted)}
+  footer a{color:var(--ink-2);font-weight:600;text-decoration:none}
+</style>
+</head>
+<body>
+
+<header><div class="wrap bar">
+  <a class="logo" href="/index.html">
+    <svg class="mark" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="1.5" y="7" width="21" height="12.5" rx="2.5" fill="#14161a"/>
+      <path d="M8 7V5.4A2.4 2.4 0 0 1 10.4 3h3.2A2.4 2.4 0 0 1 16 5.4V7" stroke="#14161a" stroke-width="2.1" stroke-linecap="round"/>
+      <rect x="1.5" y="11.4" width="21" height="2.6" fill="#f0a202"/>
+    </svg>ToolBelt</a>
+  <a class="back" href="/index.html">← Back to site</a>
+</div></header>
+
+<div class="wrap">
+  <h1>Privacy Policy</h1>
+  <p class="meta">Last updated <mark>[DATE]</mark> · <mark>[LEGAL ENTITY NAME]</mark> is the data controller</p>
+
+  <p>This policy explains what ToolBelt collects, why, who it is shared with, and what you can
+  do about it. It is written to describe what the product actually does rather than to cover
+  every theoretical possibility.</p>
+
+  <div class="good"><p><strong>We never see or store your card number.</strong> Card details are
+  collected and stored by Stripe. Our systems hold only Stripe reference tokens, which cannot be
+  used to charge a card anywhere else.</p></div>
+
+  <h2 id="s1"><span>1.</span> What we collect</h2>
+  <table>
+    <thead><tr><th>Data</th><th>Why we hold it</th></tr></thead>
+    <tbody>
+      <tr><td>Name</td><td>So the other party knows who is coming or who booked.</td></tr>
+      <tr><td>Email address</td><td>Account identity, sign-in, transactional notifications.</td></tr>
+      <tr><td>Phone number</td><td>SMS verification and job-critical contact. Verified by one-time code.</td></tr>
+      <tr><td>Password</td><td>Stored only as a cryptographic hash. We cannot read your password.</td></tr>
+      <tr><td>Job address &amp; coordinates</td><td>To match jobs to nearby workers and let the assigned worker find the property.</td></tr>
+      <tr><td>Job details &amp; photos</td><td>So workers can quote accurately.</td></tr>
+      <tr><td>Messages</td><td>In-app messages between customer and worker, retained as a record for disputes.</td></tr>
+      <tr><td>Ratings &amp; reviews</td><td>Reputation, visible to other users.</td></tr>
+      <tr><td>Payment tokens</td><td>Stripe references for your customer, payment method, charge, and payout account.</td></tr>
+      <tr><td>Worker vetting status</td><td>Whether a worker has passed review and may take jobs.</td></tr>
+      <tr><td>Account timestamps</td><td>Security, fraud prevention, and support.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="s2"><span>2.</span> What we do not collect</h2>
+  <ul>
+    <li><strong>Card numbers, CVVs, or bank account numbers.</strong> These go directly to Stripe.</li>
+    <li><strong>Continuous or background location.</strong> We store the location of a posted job,
+        not a trail of where you are.</li>
+    <li><strong>Contacts, photo library, or microphone access</strong> beyond photos you attach to a job.</li>
+    <li><strong>Data purchased from brokers,</strong> and we do not build advertising profiles.</li>
+  </ul>
+
+  <h2 id="s3"><span>3.</span> Location, specifically</h2>
+  <p>A job's address and coordinates are necessary for the service to function — matching depends
+  on distance, and the worker must be able to reach the property.</p>
+  <p><strong>Precise address is shown only to the worker whose offer you accept.</strong> Workers
+  browsing open jobs see approximate location for distance and area, not your exact address, until
+  you have chosen them.</p>
+
+  <h2 id="s4"><span>4.</span> Messages between users</h2>
+  <p>In-app messages are stored and tied to the job. They exist so a dispute can be resolved from a
+  record rather than from memory, and so contact details need not be exchanged before booking.
+  Authorized staff may review messages when investigating a dispute, a safety report, or suspected
+  fraud. We do not read messages routinely and do not use their contents for marketing.</p>
+
+  <h2 id="s5"><span>5.</span> How we use your information</h2>
+  <ul>
+    <li>To operate the marketplace — posting jobs, matching, offers, messaging, ratings.</li>
+    <li>To process payments, fees, payouts, and refunds through Stripe.</li>
+    <li>To verify identity and phone numbers, and to vet workers.</li>
+    <li>To detect and prevent fraud, abuse, and unsafe behavior.</li>
+    <li>To provide support and resolve disputes.</li>
+    <li>To send transactional messages about your jobs. Marketing email, if any, is separate and
+        you can opt out at any time.</li>
+    <li>To meet legal, tax, and accounting obligations.</li>
+  </ul>
+  <p>Where <mark>[GDPR/UK GDPR applies]</mark>, our lawful bases are performance of a contract
+  (operating the service), legitimate interests (fraud prevention, safety, service improvement),
+  consent (marketing), and legal obligation (tax and accounting records).</p>
+
+  <h2 id="s6"><span>6.</span> Who we share it with</h2>
+  <table>
+    <thead><tr><th>Recipient</th><th>What they receive, and why</th></tr></thead>
+    <tbody>
+      <tr><td>The other party to a job</td><td>Your name, rating, messages, and — once you accept an offer — the job address.</td></tr>
+      <tr><td>Stripe</td><td>Payment and payout processing, and identity verification for workers.</td></tr>
+      <tr><td>SMS provider</td><td>Your phone number, to deliver verification codes.</td></tr>
+      <tr><td>Infrastructure providers</td><td>Hosting and database services holding data on our behalf under contract.</td></tr>
+      <tr><td>Legal &amp; safety</td><td>Disclosure where required by law, or where necessary to address fraud or a credible safety risk.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout"><p><strong>We do not sell your personal information,</strong> and we do not
+  share it for cross-context behavioral advertising.</p></div>
+
+  <h2 id="s7"><span>7.</span> How we protect it</h2>
+  <ul>
+    <li>Passwords stored as salted cryptographic hashes, never in plain text.</li>
+    <li>Phone verification codes stored hashed, with expiry and attempt limits.</li>
+    <li>Access controls enforced per user on every endpoint — you can only read your own data.</li>
+    <li>Payment credentials held by Stripe, not by us.</li>
+    <li>Encrypted connections in transit and encryption at rest for personal data.</li>
+  </ul>
+  <p>No system is perfectly secure. If a breach affects your personal data we will notify you and
+  the relevant regulator as required by law.</p>
+
+  <h2 id="s8"><span>8.</span> How long we keep it</h2>
+  <ul>
+    <li><strong>Account data</strong> — while your account is active.</li>
+    <li><strong>Job, payment, and ledger records</strong> — retained after account closure for the
+        period required by tax, accounting, and anti-fraud obligations, typically
+        <mark>[7 years — confirm for your jurisdiction]</mark>.</li>
+    <li><strong>Messages</strong> — retained for the dispute window, then
+        <mark>[RETENTION PERIOD]</mark>.</li>
+    <li><strong>Verification codes</strong> — minutes; discarded once used or expired.</li>
+  </ul>
+  <p>When you delete your account we remove or anonymize personal data except where we are legally
+  required to keep it. Ratings may remain in anonymized form so the other party's reputation record
+  stays intact.</p>
+
+  <h2 id="s9"><span>9.</span> Your rights</h2>
+  <p>Depending on where you live, you may have the right to access a copy of your data, correct it,
+  delete it, restrict or object to processing, port it elsewhere, and withdraw consent. If you are
+  in California, you may request disclosure of the categories collected and request deletion; we do
+  not sell personal information, and we will not discriminate against you for exercising these rights.</p>
+  <p>Exercise any of these by emailing
+  <a href="mailto:[CONTACT EMAIL]" style="color:var(--ink-2);font-weight:600">[CONTACT EMAIL]</a>.
+  We respond within <mark>[30 days]</mark> and may need to verify your identity first. You also have
+  the right to complain to your local data protection authority.</p>
+
+  <h2 id="s10"><span>10.</span> Children</h2>
+  <p>ToolBelt is not for anyone under 18. We do not knowingly collect data from children. If you
+  believe a child has given us data, contact us and we will delete it.</p>
+
+  <h2 id="s11"><span>11.</span> International transfers</h2>
+  <p>We operate from <mark>[COUNTRY]</mark>, and our providers may process data in other countries.
+  Where data leaves your region we rely on appropriate safeguards such as standard contractual
+  clauses.</p>
+
+  <h2 id="s12"><span>12.</span> Changes to this policy</h2>
+  <p>We will update this policy as the product changes. Material changes will be notified by email
+  or in-app before taking effect, and the "last updated" date above always reflects the current version.</p>
+
+  <h2 id="s13"><span>13.</span> Contact</h2>
+  <p><mark>[LEGAL ENTITY NAME]</mark><br><mark>[BUSINESS ADDRESS]</mark><br>
+  <a href="mailto:[CONTACT EMAIL]" style="color:var(--ink-2);font-weight:600">[CONTACT EMAIL]</a></p>
+</div>
+
+<footer><div class="wrap">
+  <a href="/index.html">Home</a> · <a href="/terms.html">Terms of Service</a> ·
+  <a href="mailto:[CONTACT EMAIL]">Contact</a>
+  <p style="margin-top:10px">© <span id="yr">2026</span> <mark>[LEGAL ENTITY NAME]</mark>.</p>
+</div></footer>
+<script>document.getElementById('yr').textContent=new Date().getFullYear();</script>
+</body>
+</html>

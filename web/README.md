@@ -1,37 +1,48 @@
 # ToolBelt — public landing site
 
-Single self-contained `index.html`. No build step, no dependencies, no external
-requests — every style and the logo are inline, so it renders identically
-offline and deploys anywhere static.
+Three self-contained pages — `index.html`, `terms.html`, `privacy.html`. No
+build step, no dependencies, no external requests; every style and the logo are
+inline, so they render identically offline and deploy anywhere static.
 
-## Before you deploy: fill the placeholders
+## Status
 
-Every one is marked `[LIKE THIS]` in the HTML and highlighted in yellow on the
-rendered page, so nothing ships half-filled by accident.
+All placeholders are filled (08 August 2026). Operator is **Chidera Onyebu**
+(sole proprietor), launch city **College Park, MD**, contact
+**chideraonyebu219@gmail.com**, governing law **Maryland / Prince George's
+County**.
 
-| Placeholder | What goes there |
-|---|---|
-| `[LAUNCH CITY]` | The one city you're piloting in. Appears twice. |
-| `[CONTACT EMAIL]` | A real monitored address. Appears five times. |
-| `[LEGAL ENTITY NAME]` | Your registered business name, or your own name if sole proprietor. |
-| `[BUSINESS ADDRESS]` | Required for Stripe review and most consumer-protection rules. |
+## Open items before deploying
 
-```bash
-cd web
-grep -n '\[' index.html        # find every remaining placeholder
-```
+**1. No public postal address — deliberate, and pending.** The street address
+was removed from all three pages because it is residential. A virtual business
+address or PO Box is being arranged; once it exists, add it back in three
+places:
 
-## Still missing: terms and privacy
+- `index.html` — footer copyright line, after the operator name
+- `terms.html` — §18 Contact
+- `privacy.html` — §13 Contact
 
-The footer links to `/terms.html` and `/privacy.html`. **Those pages do not
-exist yet**, and Stripe will follow those links during review — a 404 there is a
-common cause of a rejected application.
+Give Stripe the *real* address on the account form regardless — that submission
+is private and is not what was removed here.
 
-These are legal documents, and for a marketplace they carry real weight: you are
-the merchant of record, workers are independent contractors, and you handle
-phone numbers and location data. I can draft both grounded in what the code
-actually does, but they need review by someone qualified before you rely on
-them.
+**2. Legal values are defaults, not decisions.** These were filled with
+conservative placeholders and should be confirmed:
+
+| Value | Currently | Where |
+|---|---|---|
+| Liability cap | USD 100 | terms §13 |
+| Message retention | 24 months | privacy §8 |
+| Financial record retention | 7 years | privacy §8 |
+| Data-rights response window | 30 days | privacy §9 |
+
+**3. Terms and privacy have not been reviewed by counsel.** Each file carries a
+comment block at the top saying so. The exposure is concentrated in terms §2, §6,
+§12, §13 — marketplace role, contractor status, liability, indemnity.
+
+**4. Privacy policy tracks the current data model.** It was written from the
+actual SQLAlchemy columns. Adding background checks, device IDs, an analytics
+SDK, or background location makes it inaccurate, which is a regulatory problem
+rather than a copy problem.
 
 ## Deploying
 

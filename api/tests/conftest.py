@@ -11,6 +11,35 @@ os.environ["TOOLBELT_JWT_SECRET"] = "test-secret-not-for-prod-0123456789abcdef"
 os.environ["TOOLBELT_ENVIRONMENT"] = "test"
 os.environ["TOOLBELT_UPLOAD_DIR"] = str(_TESTS_DIR / "test_uploads")
 
+
+def _resolve_stripe_key() -> str:
+    """Find a Stripe key from the environment or the .env file.
+
+    Settings reads `.env` directly, so checking os.environ alone is not enough.
+    """
+    key = os.environ.get("TOOLBELT_STRIPE_SECRET_KEY", "").strip()
+    if key:
+        return key
+    env_file = _API_DIR / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            name, sep, value = line.partition("=")
+            if sep and name.strip() == "TOOLBELT_STRIPE_SECRET_KEY":
+                return value.strip().strip('"').strip("'")
+    return ""
+
+
+# The Stripe integration module needs the real key; every other test must never
+# see it. Without this, configuring a real key in .env silently swaps the whole
+# domain suite from FakePaymentProvider to live Stripe, and tests that use
+# sentinel values like "pm_fake_card" fail against the real API.
+#
+# An empty env var still wins over the .env file in pydantic-settings
+# precedence, so this pins the domain suite to the fake provider regardless of
+# how the developer configured their machine.
+STRIPE_TEST_KEY = _resolve_stripe_key()
+os.environ["TOOLBELT_STRIPE_SECRET_KEY"] = ""
+
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 

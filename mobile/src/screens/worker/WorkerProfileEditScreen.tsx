@@ -1,11 +1,35 @@
 import * as Location from "expo-location";
 import React, { useEffect, useState } from "react";
-import { Switch } from "react-native";
+import { Switch, View } from "react-native";
 import { ApiError, api } from "../../api/client";
 import type { WorkerProfile } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { TRADES } from "../../config";
-import { Badge, Button, Card, ErrorText, Input, Row, Screen, Subtext, Title } from "../../ui";
+import { colors, palette, space, tradeMeta } from "../../theme";
+import {
+  Badge,
+  Body,
+  Button,
+  Caption,
+  Card,
+  ErrorText,
+  FadeIn,
+  Input,
+  NoticeText,
+  Row,
+  Screen,
+  SectionHeader,
+  Subtext,
+  Title,
+  successFeedback,
+} from "../../ui";
+
+const VETTING_COPY: Record<string, string> = {
+  unverified: "Verify your phone, then submit for review. Most checks clear within a day.",
+  pending: "We're reviewing your details. You'll be able to send offers once approved.",
+  verified: "You're verified — you can send offers on any job in your trade.",
+  rejected: "Your submission wasn't approved. Update your details and try again.",
+};
 
 export default function WorkerProfileEditScreen() {
   const { user, refreshMe } = useAuth();
@@ -40,12 +64,13 @@ export default function WorkerProfileEditScreen() {
       .catch(() => setProfile(null));
   }, []);
 
-  const run = async (fn: () => Promise<void>) => {
+  const run = (fn: () => Promise<void>) => async () => {
     setError(null);
     setNotice(null);
     setBusy(true);
     try {
       await fn();
+      successFeedback();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Something went wrong");
     } finally {
@@ -53,126 +78,225 @@ export default function WorkerProfileEditScreen() {
     }
   };
 
-  const save = () =>
-    run(async () => {
-      const rateCents = Math.round(parseFloat(rate) * 100);
-      const radiusKm = parseFloat(radius);
-      if (!Number.isFinite(rateCents) || rateCents <= 0)
-        throw new ApiError(0, "Hourly rate must be a positive amount");
-      if (!Number.isFinite(radiusKm) || radiusKm <= 0 || radiusKm > 100)
-        throw new ApiError(0, "Service radius must be 1–100 km");
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") throw new ApiError(0, "Location permission is required");
-      const pos = await Location.getCurrentPositionAsync({});
-      setProfile(
-        await api.saveWorkerProfile({
-          trade,
-          bio: bio.trim(),
-          hourly_rate_cents: rateCents,
-          base_lat: pos.coords.latitude,
-          base_lng: pos.coords.longitude,
-          service_radius_km: radiusKm,
-          is_available: available,
-          has_own_tools: hasTools,
-          has_vehicle: hasVehicle,
-        })
-      );
-      setNotice("Profile saved");
-    });
+  const save = run(async () => {
+    const rateCents = Math.round(parseFloat(rate) * 100);
+    const radiusKm = parseFloat(radius);
+    if (!Number.isFinite(rateCents) || rateCents <= 0)
+      throw new ApiError(0, "Hourly rate must be a positive amount");
+    if (!Number.isFinite(radiusKm) || radiusKm <= 0 || radiusKm > 100)
+      throw new ApiError(0, "Service radius must be 1–100 km");
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== "granted") throw new ApiError(0, "Location permission is required");
+    const pos = await Location.getCurrentPositionAsync({});
+    setProfile(
+      await api.saveWorkerProfile({
+        trade,
+        bio: bio.trim(),
+        hourly_rate_cents: rateCents,
+        base_lat: pos.coords.latitude,
+        base_lng: pos.coords.longitude,
+        service_radius_km: radiusKm,
+        is_available: available,
+        has_own_tools: hasTools,
+        has_vehicle: hasVehicle,
+      })
+    );
+    setNotice("Profile saved");
+  });
 
-  const sendCode = () =>
-    run(async () => {
-      await api.requestPhoneCode(phone.trim());
-      setCodeSent(true);
-      setNotice("Code sent by SMS");
-    });
+  const sendCode = run(async () => {
+    await api.requestPhoneCode(phone.trim());
+    setCodeSent(true);
+    setNotice("Code sent by SMS");
+  });
 
-  const confirmCode = () =>
-    run(async () => {
-      await api.verifyPhone(code.trim());
-      await refreshMe();
-      setNotice("Phone verified");
-    });
+  const confirmCode = run(async () => {
+    await api.verifyPhone(code.trim());
+    await refreshMe();
+    setNotice("Phone verified");
+  });
 
-  const submitVetting = () =>
-    run(async () => {
-      setProfile(await api.submitVetting());
-      setNotice("Submitted for review");
-    });
+  const submitVetting = run(async () => {
+    setProfile(await api.submitVetting());
+    setNotice("Submitted for review");
+  });
+
+  const status = profile?.vetting_status ?? "unverified";
 
   return (
     <Screen>
-      <Title>Worker profile</Title>
-      {profile && (
-        <Row>
-          <Badge label={profile.vetting_status} />
-          <Subtext>
-            {profile.jobs_completed} jobs done
-            {profile.rating_avg != null ? ` · ★ ${profile.rating_avg.toFixed(1)}` : ""}
-          </Subtext>
-        </Row>
-      )}
-      <Subtext>Trade</Subtext>
-      <Row>
-        {TRADES.map((t) => (
-          <Button
-            key={t}
-            label={trade === t ? `✓ ${t}` : t}
-            variant={trade === t ? "primary" : "secondary"}
-            onPress={() => setTrade(t)}
-          />
-        ))}
-      </Row>
-      <Input label="Bio" value={bio} onChangeText={setBio} multiline autoCapitalize="sentences" />
-      <Input label="Hourly rate" value={rate} onChangeText={setRate} keyboardType="decimal-pad" />
-      <Input
-        label="Service radius (km)"
-        value={radius}
-        onChangeText={setRadius}
-        keyboardType="number-pad"
-      />
-      <Row>
-        <Switch value={hasTools} onValueChange={setHasTools} />
-        <Subtext>I have my own tools</Subtext>
-      </Row>
-      <Row>
-        <Switch value={hasVehicle} onValueChange={setHasVehicle} />
-        <Subtext>I have a vehicle</Subtext>
-      </Row>
-      <Row>
-        <Switch value={available} onValueChange={setAvailable} />
-        <Subtext>Available for work</Subtext>
-      </Row>
-      <Button label="Save profile (uses current location)" onPress={save} loading={busy} />
-
-      {user && !user.phone_verified && (
-        <Card>
-          <Title>Verify your phone</Title>
-          <Subtext>Required before vetting. Use E.164 format, e.g. +14155550123.</Subtext>
-          <Input label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-          <Button label="Send code" variant="secondary" onPress={sendCode} loading={busy} />
-          {codeSent && (
-            <>
-              <Input
-                label="6-digit code"
-                value={code}
-                onChangeText={setCode}
-                keyboardType="number-pad"
-                maxLength={6}
-              />
-              <Button label="Verify" onPress={confirmCode} loading={busy} />
-            </>
+      <FadeIn>
+        <Card raised>
+          <Row between>
+            <Title>Verification</Title>
+            <Badge label={status} />
+          </Row>
+          <Body>{VETTING_COPY[status]}</Body>
+          {profile != null && (
+            <Row gap={space.lg}>
+              <View>
+                <Caption>JOBS DONE</Caption>
+                <Title>{profile.jobs_completed}</Title>
+              </View>
+              <View>
+                <Caption>RATING</Caption>
+                <Title>
+                  {profile.rating_avg != null ? `★ ${profile.rating_avg.toFixed(1)}` : "—"}
+                </Title>
+              </View>
+            </Row>
           )}
         </Card>
+      </FadeIn>
+
+      {user && !user.phone_verified && (
+        <FadeIn delay={60}>
+          <Card>
+            <Title>Step 1 · Verify your phone</Title>
+            <Input
+              label="Phone number"
+              hint="International format, e.g. +14155550123"
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="+14155550123"
+              keyboardType="phone-pad"
+            />
+            <Button label="Send code" variant="secondary" onPress={sendCode} loading={busy} />
+            {codeSent && (
+              <>
+                <Input
+                  label="6-digit code"
+                  value={code}
+                  onChangeText={setCode}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  placeholder="123456"
+                />
+                <Button label="Verify phone" variant="accent" onPress={confirmCode} loading={busy} />
+              </>
+            )}
+          </Card>
+        </FadeIn>
       )}
 
-      {profile &&
-        user?.phone_verified &&
-        (profile.vetting_status === "unverified" || profile.vetting_status === "rejected") && (
-          <Button label="Submit for vetting" onPress={submitVetting} loading={busy} />
-        )}
+      <SectionHeader title="Your trade" />
+      <FadeIn delay={90}>
+        <Card>
+          <Row gap={space.sm}>
+            {TRADES.map((t) => {
+              const meta = tradeMeta(t);
+              const active = trade === t;
+              return (
+                <View key={t} style={{ width: "31%" }}>
+                  <Card
+                    onPress={() => setTrade(t)}
+                    padded={false}
+                    style={{
+                      alignItems: "center",
+                      paddingVertical: space.md,
+                      gap: 4,
+                      borderColor: active ? palette.amber : colors.border,
+                      borderWidth: active ? 2 : 1,
+                      backgroundColor: active ? palette.amberSoft : colors.card,
+                    }}
+                  >
+                    <Title>{meta.icon}</Title>
+                    <Caption>{meta.label}</Caption>
+                  </Card>
+                </View>
+              );
+            })}
+          </Row>
+        </Card>
+      </FadeIn>
+
+      <SectionHeader title="Rate & area" />
+      <FadeIn delay={120}>
+        <Card>
+          <Input
+            label="Hourly rate"
+            prefix="$"
+            value={rate}
+            onChangeText={setRate}
+            keyboardType="decimal-pad"
+          />
+          <Input
+            label="Service radius (km)"
+            hint="How far you'll travel from your base location."
+            value={radius}
+            onChangeText={setRadius}
+            keyboardType="number-pad"
+          />
+          <Input
+            label="Bio"
+            hint="Customers read this before booking."
+            value={bio}
+            onChangeText={setBio}
+            placeholder="8 years of residential cleaning. Own supplies."
+            multiline
+            autoCapitalize="sentences"
+          />
+        </Card>
+      </FadeIn>
+
+      <SectionHeader title="What you bring" />
+      <FadeIn delay={150}>
+        <Card>
+          <Toggle
+            label="I have my own tools"
+            hint="Shown on your offers"
+            value={hasTools}
+            onChange={setHasTools}
+          />
+          <Toggle
+            label="I have a vehicle"
+            hint="Needed for moving and hauling jobs"
+            value={hasVehicle}
+            onChange={setHasVehicle}
+          />
+          <Toggle
+            label="Available for work"
+            hint="Turn off to pause new offers"
+            value={available}
+            onChange={setAvailable}
+          />
+        </Card>
+      </FadeIn>
+
       <ErrorText message={error} />
-      {notice && <Subtext>{notice}</Subtext>}
+      <NoticeText message={notice} />
+      <Button label="Save profile" icon="📍" onPress={save} loading={busy} />
+      <Caption>Saving updates your base location to where you are now.</Caption>
+
+      {profile && user?.phone_verified && (status === "unverified" || status === "rejected") && (
+        <Button label="Submit for vetting" variant="accent" onPress={submitVetting} loading={busy} />
+      )}
     </Screen>
+  );
+}
+
+function Toggle({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <Row between>
+      <View style={{ flex: 1, paddingRight: space.md }}>
+        <Body>{label}</Body>
+        <Caption>{hint}</Caption>
+      </View>
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        trackColor={{ true: palette.amber, false: palette.line }}
+      />
+    </Row>
   );
 }

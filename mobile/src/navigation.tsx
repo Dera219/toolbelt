@@ -36,7 +36,20 @@ function MainTabs() {
   return (
     <Tabs.Navigator
       key={mode} // reset tabs when switching between hiring and working
-      screenOptions={{ tabBarActiveTintColor: colors.primary, headerShadowVisible: false }}
+      screenOptions={{
+        tabBarActiveTintColor: colors.text,
+        tabBarInactiveTintColor: colors.subtext,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: "700" },
+        tabBarStyle: {
+          backgroundColor: colors.card,
+          borderTopColor: colors.border,
+          height: 62,
+          paddingTop: 6,
+        },
+        headerStyle: { backgroundColor: colors.bg },
+        headerTitleStyle: { fontWeight: "800" as const, fontSize: 19 },
+        headerShadowVisible: false,
+      }}
     >
       {mode === "customer" ? (
         <>
@@ -78,7 +91,14 @@ export function RootNavigator() {
   const { booting, user } = useAuth();
   if (booting) return <Loading />;
   return (
-    <Stack.Navigator screenOptions={{ headerShadowVisible: false }}>
+    <Stack.Navigator
+      screenOptions={{
+        headerShadowVisible: false,
+        headerStyle: { backgroundColor: colors.bg },
+        headerTitleStyle: { fontWeight: "800" as const, fontSize: 19 },
+        contentStyle: { backgroundColor: colors.bg },
+      }}
+    >
       {user == null ? (
         <>
           <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} />

@@ -3,11 +3,29 @@ import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import React, { useState } from "react";
-import { Image, Switch } from "react-native";
+import { Image, Switch, View } from "react-native";
 import { ApiError, api } from "../../api/client";
 import { TRADES } from "../../config";
 import type { RootStackParamList } from "../../navigation";
-import { Button, ErrorText, Input, Row, Screen, Subtext, Title } from "../../ui";
+import { colors, palette, radius, space, tradeMeta } from "../../theme";
+import {
+  Body,
+  Button,
+  Caption,
+  Card,
+  Choice,
+  ErrorText,
+  FadeIn,
+  Input,
+  Row,
+  Screen,
+  SectionHeader,
+  Subtext,
+  Title,
+  successFeedback,
+} from "../../ui";
+
+const MAX_PHOTOS = 8;
 
 export default function PostJobScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -25,11 +43,11 @@ export default function PostJobScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images"],
       allowsMultipleSelection: true,
-      selectionLimit: 8 - photoUris.length,
+      selectionLimit: MAX_PHOTOS - photoUris.length,
       quality: 0.7,
     });
     if (!result.canceled)
-      setPhotoUris((prev) => [...prev, ...result.assets.map((a) => a.uri)].slice(0, 8));
+      setPhotoUris((prev) => [...prev, ...result.assets.map((a) => a.uri)].slice(0, MAX_PHOTOS));
   };
 
   const submit = async () => {
@@ -55,6 +73,7 @@ export default function PostJobScreen() {
       for (const uri of photoUris) {
         await api.uploadJobPhoto(job.id, uri); // photos ride along after the job exists
       }
+      successFeedback();
       setTitle("");
       setDescription("");
       setAddress("");
@@ -68,63 +87,144 @@ export default function PostJobScreen() {
     }
   };
 
+  const ready = title.trim().length > 0 && address.trim().length > 0;
+
   return (
     <Screen>
-      <Title>Post a job</Title>
-      <Subtext>Trade</Subtext>
-      <Row>
-        {TRADES.map((t) => (
-          <Button
-            key={t}
-            label={trade === t ? `✓ ${t}` : t}
-            variant={trade === t ? "primary" : "secondary"}
-            onPress={() => setTrade(t)}
+      <FadeIn>
+        <Card raised>
+          <Title>What do you need done?</Title>
+          <Subtext>Pick a trade — pros in that trade get notified.</Subtext>
+          <Row gap={space.sm}>
+            {TRADES.map((t) => {
+              const meta = tradeMeta(t);
+              const active = trade === t;
+              return (
+                <View key={t} style={{ width: "31%" }}>
+                  <Card
+                    onPress={() => setTrade(t)}
+                    padded={false}
+                    style={{
+                      alignItems: "center",
+                      paddingVertical: space.md,
+                      gap: 4,
+                      borderColor: active ? palette.amber : colors.border,
+                      borderWidth: active ? 2 : 1,
+                      backgroundColor: active ? palette.amberSoft : colors.card,
+                    }}
+                  >
+                    <Title>{meta.icon}</Title>
+                    <Caption>{meta.label}</Caption>
+                  </Card>
+                </View>
+              );
+            })}
+          </Row>
+        </Card>
+      </FadeIn>
+
+      <SectionHeader title="Details" />
+      <FadeIn delay={60}>
+        <Card>
+          <Input
+            label="Title"
+            value={title}
+            onChangeText={setTitle}
+            placeholder="Deep clean 2BR apartment"
+            autoCapitalize="sentences"
           />
-        ))}
-      </Row>
-      <Input label="Title" value={title} onChangeText={setTitle} autoCapitalize="sentences" />
-      <Input
-        label="Description"
-        value={description}
-        onChangeText={setDescription}
-        multiline
-        numberOfLines={3}
-        autoCapitalize="sentences"
-      />
-      <Input label="Address" value={address} onChangeText={setAddress} autoCapitalize="words" />
-      <Input
-        label="Budget (optional, e.g. 120.00)"
-        value={budget}
-        onChangeText={setBudget}
-        keyboardType="decimal-pad"
-      />
-      <Row>
-        <Switch value={supplies} onValueChange={setSupplies} />
-        <Subtext>I will provide supplies/materials</Subtext>
-      </Row>
-      <Row>
-        {photoUris.map((uri) => (
-          <Image
-            key={uri}
-            source={{ uri }}
-            style={{ width: 64, height: 64, borderRadius: 8 }}
+          <Input
+            label="Description"
+            hint="The more detail, the more accurate the offers."
+            value={description}
+            onChangeText={setDescription}
+            placeholder="Kitchen and both bathrooms. Oven needs attention."
+            multiline
+            numberOfLines={3}
+            autoCapitalize="sentences"
           />
-        ))}
-      </Row>
-      {photoUris.length < 8 && (
-        <Button
-          label={photoUris.length ? "Add more photos" : "Add photos (helps workers price it)"}
-          variant="secondary"
-          onPress={pickPhotos}
-        />
-      )}
+          <Input
+            label="Address"
+            value={address}
+            onChangeText={setAddress}
+            placeholder="College Park, MD"
+            autoCapitalize="words"
+          />
+          <Input
+            label="Budget (optional)"
+            prefix="$"
+            hint="Leave blank to let pros name their price."
+            value={budget}
+            onChangeText={setBudget}
+            placeholder="120.00"
+            keyboardType="decimal-pad"
+          />
+        </Card>
+      </FadeIn>
+
+      <SectionHeader title="Photos" />
+      <FadeIn delay={90}>
+        <Card>
+          <Body>Photos help pros quote accurately — and cut surprise costs on the day.</Body>
+          {photoUris.length > 0 && (
+            <Row gap={space.sm}>
+              {photoUris.map((uri) => (
+                <View key={uri}>
+                  <Image source={{ uri }} style={{ width: 68, height: 68, borderRadius: radius.md }} />
+                </View>
+              ))}
+            </Row>
+          )}
+          <Row between>
+            {photoUris.length < MAX_PHOTOS && (
+              <View style={{ flex: 1 }}>
+                <Button
+                  label={photoUris.length ? "Add more" : "Add photos"}
+                  icon="📷"
+                  variant="secondary"
+                  onPress={pickPhotos}
+                />
+              </View>
+            )}
+            {photoUris.length > 0 && (
+              <Button
+                label="Clear"
+                variant="ghost"
+                size="sm"
+                full={false}
+                onPress={() => setPhotoUris([])}
+              />
+            )}
+          </Row>
+        </Card>
+      </FadeIn>
+
+      <FadeIn delay={120}>
+        <Card>
+          <Row between>
+            <View style={{ flex: 1, paddingRight: space.md }}>
+              <Title>I'll provide supplies</Title>
+              <Subtext>Cleaning products, materials, parts</Subtext>
+            </View>
+            <Switch
+              value={supplies}
+              onValueChange={setSupplies}
+              trackColor={{ true: palette.amber, false: palette.line }}
+            />
+          </Row>
+        </Card>
+      </FadeIn>
+
       <ErrorText message={error} />
       <Button
         label="Post job"
+        icon="📣"
+        variant="accent"
         onPress={submit}
         loading={busy}
-        disabled={!title.trim() || !address.trim()}
+        disabled={!ready}
       />
+      {!ready && <Caption>Add a title and address to post.</Caption>}
     </Screen>
   );
 }

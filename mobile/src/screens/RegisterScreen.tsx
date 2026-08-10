@@ -1,14 +1,27 @@
 import React, { useState } from "react";
+import { View } from "react-native";
 import { ApiError } from "../api/client";
 import type { Role } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
-import { Button, ErrorText, Input, Row, Screen, Subtext, Title } from "../ui";
+import { space } from "../theme";
+import {
+  Body,
+  Button,
+  Caption,
+  Card,
+  Choice,
+  ErrorText,
+  FadeIn,
+  Input,
+  Screen,
+  Title,
+} from "../ui";
 
-const ROLES: { value: Role; label: string }[] = [
-  { value: "customer", label: "Hire help" },
-  { value: "worker", label: "Find work" },
-  { value: "both", label: "Both" },
-];
+const ROLE_BLURB: Record<Role, string> = {
+  customer: "Post jobs and hire vetted pros near you.",
+  worker: "Find work nearby and get paid through the app.",
+  both: "Hire when you need help, work when you're free.",
+};
 
 export default function RegisterScreen() {
   const { register } = useAuth();
@@ -30,36 +43,55 @@ export default function RegisterScreen() {
     }
   };
 
+  const ready = fullName.trim() && email.trim() && password.length >= 10;
+
   return (
     <Screen>
-      <Title>Create your account</Title>
-      <Input label="Full name" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
-      <Input
-        label="Email"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        placeholder="you@example.com"
-      />
-      <Input
-        label="Password (10+ characters)"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-      />
-      <Subtext>I want to…</Subtext>
-      <Row>
-        {ROLES.map((r) => (
-          <Button
-            key={r.value}
-            label={role === r.value ? `✓ ${r.label}` : r.label}
-            variant={role === r.value ? "primary" : "secondary"}
-            onPress={() => setRole(r.value)}
+      <FadeIn>
+        <Card raised>
+          <Title>I want to…</Title>
+          <Choice
+            value={role}
+            onChange={setRole}
+            options={[
+              { value: "customer", label: "Hire help", icon: "🧾" },
+              { value: "worker", label: "Find work", icon: "🔧" },
+              { value: "both", label: "Both", icon: "🔁" },
+            ]}
           />
-        ))}
-      </Row>
-      <ErrorText message={error} />
-      <Button label="Sign up" onPress={submit} loading={busy} />
+          <Body>{ROLE_BLURB[role]}</Body>
+        </Card>
+      </FadeIn>
+
+      <FadeIn delay={60}>
+        <View style={{ gap: space.md }}>
+          <Input
+            label="Full name"
+            value={fullName}
+            onChangeText={setFullName}
+            placeholder="Chidera Onyebu"
+            autoCapitalize="words"
+          />
+          <Input
+            label="Email"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="you@example.com"
+            keyboardType="email-address"
+          />
+          <Input
+            label="Password"
+            hint="At least 10 characters."
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            placeholder="••••••••••"
+          />
+          <ErrorText message={error} />
+          <Button label="Create account" onPress={submit} loading={busy} disabled={!ready} />
+          <Caption>You can switch between hiring and working at any time.</Caption>
+        </View>
+      </FadeIn>
     </Screen>
   );
 }

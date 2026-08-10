@@ -1,0 +1,50 @@
+# Render Blueprint — provisions the API and its database in one step.
+#
+# Deploy: Render dashboard → New → Blueprint → connect this repo.
+# Everything below is created automatically. The three secrets marked
+# sync:false are prompted for at deploy time and never stored in git.
+
+databases:
+  - name: toolbelt-db
+    databaseName: toolbelt
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  - type: web
+    name: toolbelt-api
+    runtime: docker
+    plan: free
+    rootDir: api
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      # Render's DATABASE_URL is postgres://; SQLAlchemy 2 + psycopg3 needs the
+      # postgresql+psycopg:// scheme. app/core/db.py normalizes it — see the
+      # note there before changing this.
+      - key: TOOLBELT_DATABASE_URL
+        fromDatabase:
+          name: toolbelt-db
+          property: connectionString
+
+      - key: TOOLBELT_ENVIRONMENT
+        value: prod
+
+      # Generated once by Render and held thereafter. Rotating it invalidates
+      # every issued access token, which logs everyone out.
+      - key: TOOLBELT_JWT_SECRET
+        generateValue: true
+
+      # Set after the first deploy, once the service URL exists. Stripe Connect
+      # onboarding redirects here, and startup fails if it is left on localhost
+      # in prod.
+      - key: TOOLBELT_PUBLIC_BASE_URL
+        sync: false
+
+      # Live secret key. Never commit this.
+      - key: TOOLBELT_STRIPE_SECRET_KEY
+        sync: false
+
+      # Stripe webhook signing secret (whsec_…).
+      - key: TOOLBELT_PAYMENTS_WEBHOOK_SECRET
+        sync: false

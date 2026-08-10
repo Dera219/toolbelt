@@ -1,28 +1,49 @@
 {
   "expo": {
-    "name": "mobile",
-    "slug": "mobile",
+    "name": "ToolBelt",
+    "slug": "toolbelt",
+    "scheme": "toolbelt",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.toolbelt.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "ToolBelt uses your location to show jobs near you and to set your service area.",
+        "NSPhotoLibraryUsageDescription": "Attach photos to a job so workers can quote it accurately.",
+        "NSCameraUsageDescription": "Take a photo of the job so workers can quote it accurately."
+      }
     },
     "android": {
+      "package": "com.toolbelt.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "color": "#f0a202"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "ToolBelt uses your location to show jobs near you and to set your service area."
+        }
+      ]
     ]
   }
 }

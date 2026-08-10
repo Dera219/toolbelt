@@ -2,15 +2,28 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Location from "expo-location";
 import React, { useCallback, useState } from "react";
-import { RefreshControl, ScrollView } from "react-native";
-import { ApiError, api, money } from "../../api/client";
+import { RefreshControl } from "react-native";
+import { ApiError, api } from "../../api/client";
 import type { NearbyJob, WorkerProfile } from "../../api/types";
 import type { RootStackParamList } from "../../navigation";
-import { Badge, Button, Card, ErrorText, Row, Subtext, Title, colors } from "../../ui";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorText,
+  Row,
+  Screen,
+  SectionHeader,
+  Skeleton,
+  Subtext,
+  Title,
+} from "../../ui";
+import { JobCard } from "../customer/MyJobsScreen";
 
 export default function NearbyJobsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const [jobs, setJobs] = useState<NearbyJob[]>([]);
+  const [jobs, setJobs] = useState<NearbyJob[] | null>(null);
   const [profile, setProfile] = useState<WorkerProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -27,8 +40,10 @@ export default function NearbyJobsScreen() {
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         setProfile(null);
+        setJobs([]);
       } else {
         setError(e instanceof ApiError ? e.message : "Could not load jobs");
+        setJobs((prev) => prev ?? []);
       }
     }
   }, []);
@@ -45,53 +60,66 @@ export default function NearbyJobsScreen() {
     setRefreshing(false);
   };
 
+  if (jobs === null)
+    return (
+      <Screen>
+        <Skeleton height={110} />
+        <Skeleton height={110} />
+        <Skeleton height={110} />
+      </Screen>
+    );
+
   return (
-    <ScrollView
-      style={{ backgroundColor: colors.bg }}
-      contentContainerStyle={{ padding: 16, gap: 12 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-    >
+    <Screen refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}>
       {profile === null && (
-        <Card>
-          <Title>Set up your worker profile</Title>
-          <Subtext>Pick your trade, rate, and service area to see jobs near you.</Subtext>
+        <EmptyState
+          icon="🧰"
+          title="Set up your worker profile"
+          body="Tell us your trade, rate, and how far you'll travel — then jobs near you show up here."
+          action={
+            <Button label="Set up profile" onPress={() => navigation.navigate("WorkerProfileEdit")} />
+          }
+        />
+      )}
+
+      {profile !== null && profile.vetting_status !== "verified" && (
+        <Card raised>
+          <Row between>
+            <Title>Vetting</Title>
+            <Badge label={profile.vetting_status} />
+          </Row>
+          <Subtext>
+            Browse freely — but you'll need to be verified before you can send offers.
+          </Subtext>
           <Button
-            label="Set up profile"
+            label="Continue verification"
+            variant="accent"
             onPress={() => navigation.navigate("WorkerProfileEdit")}
           />
         </Card>
       )}
-      {profile !== null && profile.vetting_status !== "verified" && (
-        <Card>
-          <Title>Vetting: {profile.vetting_status}</Title>
-          <Subtext>
-            You can browse jobs, but you need to be verified before you can make offers.
-          </Subtext>
-          <Button label="Go to profile" onPress={() => navigation.navigate("WorkerProfileEdit")} />
-        </Card>
-      )}
+
       <ErrorText message={error} />
+
       {profile !== null && jobs.length === 0 && !error && (
-        <Card>
-          <Title>No open jobs nearby</Title>
-          <Subtext>Pull to refresh, or widen your service radius in your profile.</Subtext>
-        </Card>
+        <EmptyState
+          icon="📍"
+          title="No open jobs nearby"
+          body="Nothing in your area right now. Pull down to refresh, or widen your service radius."
+          action={
+            <Button
+              label="Widen my radius"
+              variant="secondary"
+              onPress={() => navigation.navigate("WorkerProfileEdit")}
+            />
+          }
+        />
       )}
-      {jobs.map((job) => (
-        <Card key={job.id} onPress={() => navigation.navigate("JobDetail", { jobId: job.id })}>
-          <Title>{job.title}</Title>
-          <Row>
-            <Badge label={job.trade} />
-            <Subtext>{job.distance_km.toFixed(1)} km away</Subtext>
-          </Row>
-          <Subtext>
-            {job.budget_cents != null
-              ? `Budget ${money(job.budget_cents, job.currency)}`
-              : "Open to offers"}
-            {job.customer_provides_supplies ? " · supplies provided" : ""}
-          </Subtext>
-        </Card>
+
+      {jobs.length > 0 && <SectionHeader title={`${jobs.length} job${jobs.length > 1 ? "s" : ""} near you`} />}
+      {jobs.map((job, i) => (
+        <JobCard key={job.id} job={job} delay={i * 60} distanceKm={job.distance_km} />
       ))}
-    </ScrollView>
+    </Screen>
   );
 }

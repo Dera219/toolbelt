@@ -67,6 +67,12 @@ export const api = {
     request<{ detail: string }>("POST", "/me/phone/request-verification", { phone }),
   verifyPhone: (code: string) => request<User>("POST", "/me/phone/verify", { code }),
 
+  // push notifications
+  registerDeviceToken: (token: string, platform: string) =>
+    request<void>("POST", "/me/device-tokens", { token, platform }),
+  unregisterDeviceToken: (token: string) =>
+    request<void>("DELETE", `/me/device-tokens/${encodeURIComponent(token)}`),
+
   // worker profile & vetting
   getWorkerProfile: () => request<WorkerProfile>("GET", "/me/worker-profile"),
   saveWorkerProfile: (body: {

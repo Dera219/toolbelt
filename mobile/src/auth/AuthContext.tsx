@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, setAuthToken } from "../api/client";
 import type { Role, User } from "../api/types";
+import { registerForPush, unregisterPush } from "../push";
 import { tokenStore } from "./storage";
 
 export type Mode = "customer" | "worker";
@@ -33,6 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (token) {
           setAuthToken(token);
           setUser(await api.me());
+          void registerForPush(); // fire-and-forget: never delays app start
           const savedMode = await tokenStore.get(MODE_KEY);
           if (savedMode === "worker" || savedMode === "customer") setModeState(savedMode);
         }
@@ -52,6 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const me = await api.me();
     setUser(me);
     if (me.role === "worker") setModeState("worker");
+    void registerForPush();
   }, []);
 
   const register = useCallback(
@@ -63,6 +66,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    // Release the device before clearing the auth token — the unregister call
+    // needs to be authenticated, and the next person to log in on this phone
+    // must not inherit these notifications.
+    await unregisterPush();
     setAuthToken(null);
     setUser(null);
     await tokenStore.remove(TOKEN_KEY);

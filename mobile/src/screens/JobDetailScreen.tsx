@@ -1,13 +1,33 @@
 import { useFocusEffect } from "@react-navigation/native";
 import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useCallback, useState } from "react";
-import { Image, ScrollView, Text } from "react-native";
-import { API_URL } from "../config";
+import { Image, ScrollView, View } from "react-native";
 import { ApiError, api, money } from "../api/client";
 import type { Job, JobRatings, Offer, Payment } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { API_URL } from "../config";
 import type { RootStackParamList } from "../navigation";
-import { Badge, Button, Card, ErrorText, Input, Row, Screen, Subtext, Title, colors } from "../ui";
+import { palette, radius, space, tradeMeta } from "../theme";
+import {
+  Badge,
+  Body,
+  Button,
+  Caption,
+  Card,
+  ErrorText,
+  FadeIn,
+  Input,
+  Pill,
+  Price,
+  Row,
+  Screen,
+  SectionHeader,
+  Skeleton,
+  StatusRail,
+  Subtext,
+  Title,
+  successFeedback,
+} from "../ui";
 
 type Props = NativeStackScreenProps<RootStackParamList, "JobDetail">;
 
@@ -57,6 +77,7 @@ export default function JobDetailScreen({ route, navigation }: Props) {
     setBusy(true);
     try {
       await fn();
+      successFeedback();
       await load();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Action failed");
@@ -68,206 +89,312 @@ export default function JobDetailScreen({ route, navigation }: Props) {
   if (job == null)
     return (
       <Screen>
+        <Skeleton height={150} />
+        <Skeleton height={100} />
         <ErrorText message={error} />
       </Screen>
     );
 
+  const trade = tradeMeta(job.trade);
+  const pending = offers.filter((o) => o.status === "pending");
   const canRate =
     job.status === "completed" && (isCustomer || isAssignedWorker) && ratings?.mine == null;
 
   return (
     <Screen>
-      <Title>{job.title}</Title>
-      <Row>
-        <Badge label={job.status} />
-        <Badge label={job.trade} />
-        {job.customer_provides_supplies && <Badge label="supplies provided" />}
-      </Row>
-      <Subtext>{job.address_text}</Subtext>
-      {job.photos.length > 0 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {job.photos.map((photo) => (
-            <Image
-              key={photo.id}
-              source={{ uri: `${API_URL}${photo.url}` }}
-              style={{ width: 140, height: 140, borderRadius: 10, marginRight: 8 }}
-            />
-          ))}
-        </ScrollView>
-      )}
-      {job.description !== "" && <Text style={{ color: colors.text }}>{job.description}</Text>}
-      {job.budget_cents != null && (
-        <Subtext>Budget: {money(job.budget_cents, job.currency)}</Subtext>
-      )}
+      <FadeIn>
+        <Card raised>
+          <Row between>
+            <Row gap={space.sm}>
+              <View style={styles.tradeIcon}>
+                <Title>{trade.icon}</Title>
+              </View>
+              <View>
+                <Title>{job.title}</Title>
+                <Caption>{trade.label}</Caption>
+              </View>
+            </Row>
+            <Badge label={job.status} />
+          </Row>
+
+          <StatusRail status={job.status} />
+
+          {job.photos.length > 0 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 4 }}>
+              {job.photos.map((photo) => (
+                <Image
+                  key={photo.id}
+                  source={{ uri: `${API_URL}${photo.url}` }}
+                  style={{
+                    width: 132,
+                    height: 132,
+                    borderRadius: radius.md,
+                    marginRight: space.sm,
+                  }}
+                />
+              ))}
+            </ScrollView>
+          )}
+
+          {job.description !== "" && <Body>{job.description}</Body>}
+
+          <Row gap={space.sm}>
+            <Pill icon="📍" label={job.address_text} />
+            {job.customer_provides_supplies && <Pill icon="🧴" label="Supplies provided" />}
+          </Row>
+
+          {job.budget_cents != null && (
+            <Row between>
+              <Caption>CUSTOMER BUDGET</Caption>
+              <Price value={money(job.budget_cents, job.currency)} size="lg" />
+            </Row>
+          )}
+        </Card>
+      </FadeIn>
 
       {payment != null && (
-        <Card>
-          <Title>Payment</Title>
-          <Row>
-            <Badge label={payment.status} />
-            <Subtext>{money(payment.amount_cents, payment.currency)}</Subtext>
-          </Row>
-          {isAssignedWorker && (
-            <Subtext>
-              You earn {money(payment.worker_net_cents, payment.currency)} after the platform fee.
-            </Subtext>
-          )}
-          {payment.refunded_cents > 0 && (
-            <Subtext>Refunded: {money(payment.refunded_cents, payment.currency)}</Subtext>
-          )}
-        </Card>
-      )}
-
-      {/* Customer: review offers while open */}
-      {isCustomer && job.status === "open" && (
-        <Card>
-          <Title>Offers ({offers.filter((o) => o.status === "pending").length})</Title>
-          {offers.length === 0 && <Subtext>No offers yet — workers nearby were notified.</Subtext>}
-          {offers.map((offer) => (
-            <Card key={offer.id}>
-              <Row>
-                <Title>{money(offer.price_cents, job.currency)}</Title>
-                <Badge label={offer.status} />
-              </Row>
-              {offer.message !== "" && <Subtext>{offer.message}</Subtext>}
-              <Row>
-                {offer.status === "pending" && (
-                  <Button
-                    label="Accept & book"
-                    onPress={run(() => api.acceptOffer(offer.id))}
-                    loading={busy}
-                  />
+        <FadeIn delay={60}>
+          <Card>
+            <Row between>
+              <Title>Payment</Title>
+              <Badge label={payment.status} />
+            </Row>
+            <Row between>
+              <Subtext>{isAssignedWorker ? "You earn" : "Total"}</Subtext>
+              <Price
+                value={money(
+                  isAssignedWorker ? payment.worker_net_cents : payment.amount_cents,
+                  payment.currency
                 )}
-                <Button
-                  label="Chat"
-                  variant="secondary"
-                  onPress={() =>
-                    navigation.navigate("Chat", { jobId: job.id, workerId: offer.worker_id })
-                  }
-                />
-              </Row>
-            </Card>
-          ))}
-        </Card>
+              />
+            </Row>
+            {isAssignedWorker && (
+              <Caption>
+                After the {money(payment.platform_fee_cents, payment.currency)} platform fee
+              </Caption>
+            )}
+            {payment.refunded_cents > 0 && (
+              <Caption>Refunded {money(payment.refunded_cents, payment.currency)}</Caption>
+            )}
+          </Card>
+        </FadeIn>
       )}
 
-      {/* Worker: make an offer while open */}
-      {mode === "worker" && !isCustomer && job.status === "open" && myOffer == null && (
-        <Card>
-          <Title>Make an offer</Title>
-          <Input
-            label="Your price (e.g. 110.00)"
-            value={offerPrice}
-            onChangeText={setOfferPrice}
-            keyboardType="decimal-pad"
-          />
-          <Input
-            label="Message (optional)"
-            value={offerMessage}
-            onChangeText={setOfferMessage}
-            autoCapitalize="sentences"
-          />
-          <Button
-            label="Send offer"
-            loading={busy}
-            onPress={run(async () => {
-              const cents = Math.round(parseFloat(offerPrice) * 100);
-              if (!Number.isFinite(cents) || cents <= 0)
-                throw new ApiError(0, "Enter a valid price");
-              await api.makeOffer(job.id, cents, offerMessage.trim());
-            })}
-          />
-        </Card>
+      {/* Customer: offers to review */}
+      {isCustomer && job.status === "open" && (
+        <>
+          <SectionHeader title={pending.length ? `${pending.length} offer${pending.length > 1 ? "s" : ""}` : "Offers"} />
+          {offers.length === 0 && (
+            <Card>
+              <Subtext>No offers yet — nearby pros have been notified.</Subtext>
+            </Card>
+          )}
+          {offers.map((offer, i) => (
+            <FadeIn key={offer.id} delay={i * 60}>
+              <Card>
+                <Row between>
+                  <Price value={money(offer.price_cents, job.currency)} />
+                  <Badge label={offer.status} />
+                </Row>
+                {offer.message !== "" && <Body>{offer.message}</Body>}
+                <Row gap={space.sm}>
+                  {offer.status === "pending" && (
+                    <View style={{ flex: 1 }}>
+                      <Button
+                        label="Accept & book"
+                        variant="accent"
+                        onPress={run(() => api.acceptOffer(offer.id))}
+                        loading={busy}
+                      />
+                    </View>
+                  )}
+                  <Button
+                    label="Chat"
+                    icon="💬"
+                    variant="secondary"
+                    size="sm"
+                    full={false}
+                    onPress={() =>
+                      navigation.navigate("Chat", { jobId: job.id, workerId: offer.worker_id })
+                    }
+                  />
+                </Row>
+              </Card>
+            </FadeIn>
+          ))}
+        </>
       )}
+
+      {/* Worker: send an offer */}
+      {mode === "worker" && !isCustomer && job.status === "open" && myOffer == null && (
+        <FadeIn delay={60}>
+          <Card raised>
+            <Title>Send an offer</Title>
+            <Subtext>Customers usually book within a few hours.</Subtext>
+            <Input
+              label="Your price"
+              prefix="$"
+              value={offerPrice}
+              onChangeText={setOfferPrice}
+              keyboardType="decimal-pad"
+              placeholder="110.00"
+            />
+            <Input
+              label="Message"
+              hint="A short note wins more jobs than a low price."
+              value={offerMessage}
+              onChangeText={setOfferMessage}
+              placeholder="I can start tomorrow at 9am."
+              autoCapitalize="sentences"
+            />
+            <Button
+              label="Send offer"
+              variant="accent"
+              loading={busy}
+              onPress={run(async () => {
+                const cents = Math.round(parseFloat(offerPrice) * 100);
+                if (!Number.isFinite(cents) || cents <= 0)
+                  throw new ApiError(0, "Enter a valid price");
+                await api.makeOffer(job.id, cents, offerMessage.trim());
+              })}
+            />
+          </Card>
+        </FadeIn>
+      )}
+
       {myOffer != null && !isCustomer && (
         <Card>
-          <Row>
-            <Title>Your offer: {money(myOffer.price_cents, job.currency)}</Title>
+          <Row between>
+            <View>
+              <Caption>YOUR OFFER</Caption>
+              <Price value={money(myOffer.price_cents, job.currency)} />
+            </View>
             <Badge label={myOffer.status} />
           </Row>
           <Button
             label="Chat with customer"
+            icon="💬"
             variant="secondary"
-            onPress={() => navigation.navigate("Chat", { jobId: job.id, workerId: myOffer.worker_id })}
+            onPress={() =>
+              navigation.navigate("Chat", { jobId: job.id, workerId: myOffer.worker_id })
+            }
           />
         </Card>
       )}
 
       {/* Lifecycle actions */}
-      <Row>
-        {isAssignedWorker && job.status === "assigned" && (
-          <Button label="Start job" onPress={run(() => api.startJob(job.id))} loading={busy} />
-        )}
-        {(isCustomer || isAssignedWorker) && job.status === "in_progress" && (
-          <Button
-            label="Mark completed"
-            onPress={run(() => api.completeJob(job.id))}
-            loading={busy}
-          />
-        )}
-        {((isCustomer && (job.status === "open" || job.status === "assigned")) ||
-          (isAssignedWorker && job.status === "assigned")) && (
-          <Button
-            label="Cancel job"
-            variant="danger"
-            onPress={run(() => api.cancelJob(job.id))}
-            loading={busy}
-          />
-        )}
-        {(isCustomer || isAssignedWorker) && job.assigned_worker_id != null && (
-          <Button
-            label="Chat"
-            variant="secondary"
-            onPress={() =>
-              navigation.navigate("Chat", { jobId: job.id, workerId: job.assigned_worker_id! })
-            }
-          />
-        )}
-      </Row>
+      {(isCustomer || isAssignedWorker) && (
+        <Row gap={space.sm}>
+          {isAssignedWorker && job.status === "assigned" && (
+            <View style={{ flex: 1 }}>
+              <Button
+                label="Start job"
+                icon="▶️"
+                variant="accent"
+                onPress={run(() => api.startJob(job.id))}
+                loading={busy}
+              />
+            </View>
+          )}
+          {job.status === "in_progress" && (
+            <View style={{ flex: 1 }}>
+              <Button
+                label="Mark completed"
+                icon="✅"
+                onPress={run(() => api.completeJob(job.id))}
+                loading={busy}
+              />
+            </View>
+          )}
+          {job.assigned_worker_id != null && (
+            <Button
+              label="Chat"
+              icon="💬"
+              variant="secondary"
+              full={false}
+              onPress={() =>
+                navigation.navigate("Chat", { jobId: job.id, workerId: job.assigned_worker_id! })
+              }
+            />
+          )}
+        </Row>
+      )}
+      {((isCustomer && (job.status === "open" || job.status === "assigned")) ||
+        (isAssignedWorker && job.status === "assigned")) && (
+        <Button
+          label="Cancel job"
+          variant="danger"
+          onPress={run(() => api.cancelJob(job.id))}
+          loading={busy}
+        />
+      )}
 
       {/* Ratings */}
       {canRate && (
-        <Card>
-          <Title>Rate this {isCustomer ? "worker" : "customer"}</Title>
-          <Row>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <Button
-                key={n}
-                label={n <= stars ? "★" : "☆"}
-                variant={n <= stars ? "primary" : "secondary"}
-                onPress={() => setStars(n)}
-              />
-            ))}
-          </Row>
-          <Input
-            label="Comment (optional)"
-            value={comment}
-            onChangeText={setComment}
-            autoCapitalize="sentences"
-          />
-          <Button
-            label="Submit rating"
-            loading={busy}
-            onPress={run(() => api.rateJob(job.id, stars, comment.trim()))}
-          />
-        </Card>
+        <FadeIn>
+          <Card raised>
+            <Title>Rate this {isCustomer ? "pro" : "customer"}</Title>
+            <Subtext>Hidden from them until you've both rated.</Subtext>
+            <Row gap={space.xs}>
+              {[1, 2, 3, 4, 5].map((n) => (
+                <Button
+                  key={n}
+                  label={n <= stars ? "★" : "☆"}
+                  variant={n <= stars ? "accent" : "secondary"}
+                  size="sm"
+                  full={false}
+                  onPress={() => setStars(n)}
+                />
+              ))}
+            </Row>
+            <Input
+              label="Comment"
+              value={comment}
+              onChangeText={setComment}
+              placeholder="How did it go?"
+              autoCapitalize="sentences"
+            />
+            <Button
+              label="Submit rating"
+              loading={busy}
+              onPress={run(() => api.rateJob(job.id, stars, comment.trim()))}
+            />
+          </Card>
+        </FadeIn>
       )}
+
       {ratings?.mine != null && (
         <Card>
-          <Subtext>You rated: {"★".repeat(ratings.mine.stars)}</Subtext>
+          <Caption>YOU RATED</Caption>
+          <Title>{"★".repeat(ratings.mine.stars)}</Title>
           {ratings.other != null ? (
-            <Subtext>
-              They rated you: {"★".repeat(ratings.other.stars)}
-              {ratings.other.comment ? ` — "${ratings.other.comment}"` : ""}
-            </Subtext>
-          ) : ratings.other_submitted ? (
-            <Subtext>Their rating unlocks when both are in (or after 14 days).</Subtext>
+            <>
+              <Caption>THEY RATED YOU</Caption>
+              <Title>{"★".repeat(ratings.other.stars)}</Title>
+              {ratings.other.comment ? <Body>“{ratings.other.comment}”</Body> : null}
+            </>
           ) : (
-            <Subtext>Waiting for their rating.</Subtext>
+            <Subtext>
+              {ratings.other_submitted
+                ? "Their rating unlocks once you've both rated."
+                : "Waiting on their rating."}
+            </Subtext>
           )}
         </Card>
       )}
+
       <ErrorText message={error} />
     </Screen>
   );
 }
+
+const styles = {
+  tradeIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: palette.amberSoft,
+    alignItems: "center" as const,
+    justifyContent: "center" as const,
+  },
+};

@@ -10,6 +10,7 @@ from app.modules.jobs import state
 from app.modules.jobs.models import Job, JobStatus, Offer, OfferStatus
 from app.modules.jobs.schemas import JobCreateIn, OfferCreateIn
 from app.modules.matching.geo import bounding_box, haversine_km
+from app.modules.notifications import service as notifications
 from app.modules.payments import service as payments_service
 
 
@@ -17,6 +18,7 @@ def create_job(db: Session, customer: User, body: JobCreateIn) -> Job:
     job = Job(customer_id=customer.id, **body.model_dump())
     db.add(job)
     db.flush()
+    notifications.notify_job_posted(db, job)
     return job
 
 
@@ -90,6 +92,7 @@ def make_offer(db: Session, worker: User, job_id: int, body: OfferCreateIn) -> O
     offer = Offer(job_id=job.id, worker_id=worker.id, **body.model_dump())
     db.add(offer)
     db.flush()
+    notifications.notify_offer_received(db, job, offer.price_cents)
     return offer
 
 
@@ -120,6 +123,7 @@ def accept_offer(db: Session, customer: User, offer_id: int) -> Offer:
     # the whole acceptance (assignment, sibling expiry) rolls back.
     payments_service.authorize_for_job(db, customer, job, offer.price_cents)
     db.flush()
+    notifications.notify_offer_accepted(db, job, offer.worker_id)
     return offer
 
 
@@ -145,7 +149,9 @@ def _transition_endpoint(
 
 
 def start_job(db: Session, worker: User, job_id: int) -> Job:
-    return _transition_endpoint(db, worker, job_id, JobStatus.IN_PROGRESS, "worker")
+    job = _transition_endpoint(db, worker, job_id, JobStatus.IN_PROGRESS, "worker")
+    notifications.notify_job_started(db, job)
+    return job
 
 
 def complete_job(db: Session, actor: User, job_id: int) -> Job:
@@ -155,6 +161,7 @@ def complete_job(db: Session, actor: User, job_id: int) -> Job:
         if profile is not None:
             profile.jobs_completed += 1
     payments_service.capture_for_job(db, job)
+    notifications.notify_job_completed(db, job)
     return job
 
 
@@ -163,4 +170,5 @@ def cancel_job(db: Session, actor: User, job_id: int) -> Job:
     allowed = "customer" if job.status == JobStatus.OPEN else "either"
     job = _transition_endpoint(db, actor, job_id, JobStatus.CANCELLED, allowed)
     payments_service.release_for_job(db, job)
+    notifications.notify_job_cancelled(db, job, actor_id=actor.id)
     return job

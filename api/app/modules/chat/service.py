@@ -4,6 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.modules.notifications import service as notifications
 from app.modules.identity.models import User
 from app.modules.chat.models import Message
 from app.modules.jobs.models import Job, Offer
@@ -47,6 +48,9 @@ def send_message(db: Session, actor: User, job_id: int, worker_id: int, body: st
     message = Message(job_id=job.id, worker_id=worker_id, sender_id=actor.id, body=text)
     db.add(message)
     db.flush()
+    # Notify the other side of the thread — never the sender.
+    recipient_id = worker_id if actor.id == job.customer_id else job.customer_id
+    notifications.notify_message(db, job, recipient_id, text)
     return message
 
 

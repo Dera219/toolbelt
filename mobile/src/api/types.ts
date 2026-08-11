@@ -130,3 +130,27 @@ export interface BillingProfile {
   user_id: number;
   default_payment_method_ref: string | null;
 }
+
+export type DisputeReason =
+  | "work_not_done"
+  | "quality"
+  | "damage"
+  | "no_show"
+  | "overcharged"
+  | "unsafe"
+  | "other";
+
+export interface Dispute {
+  id: number;
+  job_id: number;
+  opened_by: number;
+  against_id: number;
+  reason: DisputeReason;
+  detail: string;
+  status: "open" | "resolved";
+  outcome: "dismissed" | "partial_refund" | "full_refund" | null;
+  resolution_note: string;
+  refunded_cents: number;
+  created_at: string;
+  resolved_at: string | null;
+}

@@ -2,6 +2,8 @@ import { API_URL } from "../config";
 import type {
   Balance,
   BillingProfile,
+  Dispute,
+  DisputeReason,
   Job,
   JobRatings,
   Message,
@@ -142,6 +144,11 @@ export const api = {
   rateJob: (jobId: number, stars: number, comment: string) =>
     request<unknown>("POST", `/jobs/${jobId}/ratings`, { stars, comment }),
   jobRatings: (jobId: number) => request<JobRatings>("GET", `/jobs/${jobId}/ratings`),
+
+  // disputes
+  openDispute: (jobId: number, reason: DisputeReason, detail: string) =>
+    request<Dispute>("POST", `/jobs/${jobId}/dispute`, { reason, detail }),
+  jobDispute: (jobId: number) => request<Dispute>("GET", `/jobs/${jobId}/dispute`),
 
   // payments
   setPaymentMethod: (ref: string) =>

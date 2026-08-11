@@ -11,11 +11,23 @@ from app.modules.jobs.models import Job, JobEvent, JobStatus
 
 _ALLOWED: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.OPEN: frozenset({JobStatus.ASSIGNED, JobStatus.CANCELLED}),
-    JobStatus.ASSIGNED: frozenset({JobStatus.IN_PROGRESS, JobStatus.CANCELLED}),
+    JobStatus.ASSIGNED: frozenset(
+        {JobStatus.IN_PROGRESS, JobStatus.CANCELLED, JobStatus.DISPUTED}
+    ),
     JobStatus.IN_PROGRESS: frozenset({JobStatus.COMPLETED, JobStatus.DISPUTED}),
-    JobStatus.COMPLETED: frozenset(),
+    # Work is judged after it is done, so a completed job stays contestable for
+    # a bounded window (trust.service.DISPUTE_WINDOW enforces the deadline).
+    JobStatus.COMPLETED: frozenset({JobStatus.DISPUTED}),
     JobStatus.CANCELLED: frozenset(),
-    JobStatus.DISPUTED: frozenset({JobStatus.COMPLETED, JobStatus.CANCELLED}),
+    # Resolution restores whichever status the job held before the dispute.
+    JobStatus.DISPUTED: frozenset(
+        {
+            JobStatus.ASSIGNED,
+            JobStatus.IN_PROGRESS,
+            JobStatus.COMPLETED,
+            JobStatus.CANCELLED,
+        }
+    ),
 }
 
 

@@ -15,6 +15,8 @@ from app.modules.payments import models as payments_models  # noqa: F401  (regis
 from app.modules.payments.router import router as payments_router
 from app.modules.reputation import models as reputation_models  # noqa: F401  (register tables)
 from app.modules.reputation.router import router as reputation_router
+from app.modules.trust import models as trust_models  # noqa: F401  (register tables)
+from app.modules.trust.router import disputes_router
 from app.modules.trust.router import router as trust_router
 
 
@@ -55,6 +57,7 @@ app.include_router(reputation_router, tags=["reputation"])
 app.include_router(chat_router, tags=["chat"])
 app.include_router(notifications_router, tags=["notifications"])
 app.include_router(payments_router, tags=["payments"])
+app.include_router(disputes_router, tags=["disputes"])
 app.include_router(trust_router, tags=["admin"])
 
 

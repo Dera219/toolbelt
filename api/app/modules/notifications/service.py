@@ -197,3 +197,23 @@ def notify_message(db: Session, job: Job, recipient_id: int, preview: str) -> No
         body=preview[:120],
         data={"type": "chat.message", "job_id": job.id},
     )
+
+
+def notify_dispute_opened(db: Session, job: Job, against_id: int) -> None:
+    _dispatch(
+        db,
+        [against_id],
+        title="Dispute opened",
+        body=f"{job.title} — we'll review and be in touch.",
+        data={"type": "dispute.opened", "job_id": job.id},
+    )
+
+
+def notify_dispute_resolved(db: Session, job: Job, opened_by: int, against_id: int) -> None:
+    _dispatch(
+        db,
+        [opened_by, against_id],
+        title="Dispute resolved",
+        body=job.title,
+        data={"type": "dispute.resolved", "job_id": job.id},
+    )

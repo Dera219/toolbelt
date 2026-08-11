@@ -3,7 +3,7 @@ import type { NativeStackScreenProps } from "@react-navigation/native-stack";
 import React, { useCallback, useState } from "react";
 import { Image, ScrollView, View } from "react-native";
 import { ApiError, api, money } from "../api/client";
-import type { Job, JobRatings, Offer, Payment } from "../api/types";
+import type { Dispute, DisputeReason, Job, JobRatings, Offer, Payment } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { API_URL } from "../config";
 import type { RootStackParamList } from "../navigation";
@@ -38,6 +38,10 @@ export default function JobDetailScreen({ route, navigation }: Props) {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [payment, setPayment] = useState<Payment | null>(null);
   const [ratings, setRatings] = useState<JobRatings | null>(null);
+  const [dispute, setDispute] = useState<Dispute | null>(null);
+  const [disputeOpen, setDisputeOpen] = useState(false);
+  const [disputeReason, setDisputeReason] = useState<DisputeReason>("quality");
+  const [disputeDetail, setDisputeDetail] = useState("");
   const [offerPrice, setOfferPrice] = useState("");
   const [offerMessage, setOfferMessage] = useState("");
   const [stars, setStars] = useState(5);
@@ -57,10 +61,12 @@ export default function JobDetailScreen({ route, navigation }: Props) {
         api.jobOffers(jobId),
         api.jobPayment(jobId),
         api.jobRatings(jobId),
+        api.jobDispute(jobId),
       ]);
       setOffers(results[0].status === "fulfilled" ? results[0].value : []);
       setPayment(results[1].status === "fulfilled" ? results[1].value : null);
       setRatings(results[2].status === "fulfilled" ? results[2].value : null);
+      setDispute(results[3].status === "fulfilled" ? results[3].value : null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load job");
     }
@@ -383,10 +389,104 @@ export default function JobDetailScreen({ route, navigation }: Props) {
         </Card>
       )}
 
+      {/* Disputes */}
+      {dispute != null && (
+        <FadeIn>
+          <Card>
+            <Row between>
+              <Title>{dispute.status === "open" ? "Dispute under review" : "Dispute resolved"}</Title>
+              <Badge
+                label={dispute.status === "open" ? "in review" : (dispute.outcome ?? "resolved")}
+                tone={dispute.status === "open" ? "warning" : "positive"}
+              />
+            </Row>
+            <Caption>{dispute.reason.replace(/_/g, " ").toUpperCase()}</Caption>
+            {dispute.detail !== "" && <Body>{dispute.detail}</Body>}
+            {dispute.status === "open" ? (
+              <Subtext>Our team is reviewing. We'll notify you both when it's settled.</Subtext>
+            ) : (
+              <>
+                {dispute.resolution_note !== "" && <Body>{dispute.resolution_note}</Body>}
+                {dispute.refunded_cents > 0 && (
+                  <Subtext>
+                    Refunded {money(dispute.refunded_cents, job.currency)} to the customer.
+                  </Subtext>
+                )}
+              </>
+            )}
+          </Card>
+        </FadeIn>
+      )}
+
+      {(isCustomer || isAssignedWorker) &&
+        dispute == null &&
+        DISPUTABLE.has(job.status) &&
+        (disputeOpen ? (
+          <FadeIn>
+            <Card raised>
+              <Title>Report a problem</Title>
+              <Subtext>
+                Use this only if something genuinely went wrong — try the chat first.
+              </Subtext>
+              <Row gap={space.sm}>
+                {DISPUTE_REASONS.map((r) => (
+                  <Button
+                    key={r.value}
+                    label={r.label}
+                    size="sm"
+                    full={false}
+                    variant={disputeReason === r.value ? "primary" : "secondary"}
+                    onPress={() => setDisputeReason(r.value)}
+                  />
+                ))}
+              </Row>
+              <Input
+                label="What happened?"
+                value={disputeDetail}
+                onChangeText={setDisputeDetail}
+                placeholder="Give us the details — dates, what was agreed, what went wrong."
+                multiline
+                numberOfLines={3}
+                autoCapitalize="sentences"
+              />
+              <Button
+                label="Submit report"
+                variant="danger"
+                loading={busy}
+                onPress={run(async () => {
+                  await api.openDispute(job.id, disputeReason, disputeDetail.trim());
+                  setDisputeOpen(false);
+                  setDisputeDetail("");
+                })}
+              />
+              <Button label="Never mind" variant="ghost" onPress={() => setDisputeOpen(false)} />
+            </Card>
+          </FadeIn>
+        ) : (
+          <Button
+            label="Report a problem"
+            variant="ghost"
+            size="sm"
+            onPress={() => setDisputeOpen(true)}
+          />
+        ))}
+
       <ErrorText message={error} />
     </Screen>
   );
 }
+
+const DISPUTABLE = new Set(["assigned", "in_progress", "completed"]);
+
+const DISPUTE_REASONS: { value: DisputeReason; label: string }[] = [
+  { value: "work_not_done", label: "Not done" },
+  { value: "quality", label: "Quality" },
+  { value: "damage", label: "Damage" },
+  { value: "no_show", label: "No-show" },
+  { value: "overcharged", label: "Overcharged" },
+  { value: "unsafe", label: "Unsafe" },
+  { value: "other", label: "Other" },
+];
 
 const styles = {
   tradeIcon: {

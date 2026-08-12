@@ -85,9 +85,15 @@ fly deploy
 
 1. **Point the mobile app at it** — replace the placeholder hosts in
    `mobile/eas.json` (`staging.example.com`, `api.example.com`).
-2. **Register the Stripe webhook** — Stripe → Developers → Webhooks → add
-   `https://<your-host>/webhooks/payments`, then put the signing secret in
-   `TOOLBELT_PAYMENTS_WEBHOOK_SECRET`.
+2. **Do NOT register `/webhooks/payments` in Stripe.** The endpoint verifies a
+   plain HMAC in `X-Webhook-Signature` over an internal event shape — it cannot
+   consume Stripe's `Stripe-Signature` scheme or payload, so every delivery
+   would 400 and Stripe would eventually disable the endpoint. It exists for
+   the fake provider in tests. Correctness does not need it: the polling path
+   (`service.refresh_payout_status` → `flush_pending_payouts`) already flips
+   `payouts_enabled` and releases held payouts. If webhook latency is ever
+   wanted, first implement real Stripe signature verification + payload
+   translation in the payments module.
 3. **Build the Android dev client** (`mobile/BUILDS.md`) and confirm a real
    phone receives a job notification.
 

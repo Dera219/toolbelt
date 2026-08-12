@@ -87,7 +87,7 @@ def start_card_setup_session(db: Session, user: User, return_url: str) -> str:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"Could not start setup: {exc}")
 
 
-def confirm_card_setup(db: Session, user: User) -> BillingProfile:
+def confirm_card_setup(db: Session, user: User, setup_ref: str | None = None) -> BillingProfile:
     """Record whatever card the user actually saved.
 
     Called after the sheet or hosted page reports success. We ask the provider
@@ -99,10 +99,15 @@ def confirm_card_setup(db: Session, user: User) -> BillingProfile:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No billing profile")
     provider = get_payment_provider()
     try:
-        payment_method = provider.latest_payment_method(profile.provider_customer_ref)
+        # Exact when the client tells us which setup completed; the list is a
+        # fallback for clients that cannot report one.
+        payment_method = (
+            provider.payment_method_from_setup(setup_ref) if setup_ref else None
+        ) or provider.latest_payment_method(profile.provider_customer_ref)
         if payment_method is None:
             raise HTTPException(
-                status.HTTP_409_CONFLICT, detail="No card was saved. Try adding it again."
+                status.HTTP_409_CONFLICT,
+                detail="No payment method was saved. Try adding it again.",
             )
         provider.set_default_payment_method(profile.provider_customer_ref, payment_method)
     except ProviderError as exc:

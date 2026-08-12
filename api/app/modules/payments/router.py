@@ -19,6 +19,7 @@ from app.modules.payments.schemas import (
     CardSetupOut,
     CardSetupSessionIn,
     CardSetupSessionOut,
+    ConfirmCardIn,
     PaymentMethodIn,
     PaymentOut,
     PayoutAccountCreatedOut,
@@ -57,9 +58,9 @@ def start_card_setup_session(body: CardSetupSessionIn, user: CurrentUser, db: Db
 
 
 @router.post("/me/billing/confirm-card", response_model=BillingProfileOut)
-def confirm_card(user: CurrentUser, db: DbDep):
-    """Called after the sheet or hosted page succeeds; records the saved card."""
-    return service.confirm_card_setup(db, user)
+def confirm_card(user: CurrentUser, db: DbDep, body: ConfirmCardIn | None = None):
+    """Called after the sheet or hosted page succeeds; records what was saved."""
+    return service.confirm_card_setup(db, user, body.setup_ref if body else None)
 
 
 @router.post("/me/payment-method", response_model=BillingProfileOut)

@@ -15,19 +15,25 @@ import { collectViaSheet } from "./sheet";
  * Returns false when the user backs out, which is not an error.
  */
 export async function collectCard(): Promise<boolean> {
-  const saved = Platform.OS === "web" ? await collectViaHostedPage() : await collectViaSheet();
-  if (!saved) return false;
-  // Ask our server to record what Stripe actually holds — never a client-supplied id.
-  await api.confirmCard();
+  const setupRef =
+    Platform.OS === "web" ? await collectViaHostedPage() : await collectViaSheet();
+  if (setupRef === null) return false;
+  // The reference names which setup completed; the server resolves the saved
+  // payment method from it directly rather than guessing from a list. The id
+  // alone proves nothing — the server still verifies it against the provider.
+  await api.confirmCard(setupRef || undefined);
   return true;
 }
 
-async function collectViaHostedPage(): Promise<boolean> {
+/** Returns the completed setup's reference, or null if the user backed out. */
+async function collectViaHostedPage(): Promise<string | null> {
   const returnUrl = typeof window !== "undefined" ? window.location.origin : API_URL;
   const { url } = await api.startCardSetupSession(returnUrl);
 
   const result = await WebBrowser.openAuthSessionAsync(url, returnUrl);
-  if (result.type !== "success") return false;
-  // Stripe appends the outcome to the return URL.
-  return !result.url.includes("card=cancelled");
+  if (result.type !== "success") return null;
+  // Stripe appends the outcome and the session id to the return URL.
+  if (result.url.includes("card=cancelled")) return null;
+  const sessionId = new URL(result.url).searchParams.get("session_id");
+  return sessionId ?? "";
 }

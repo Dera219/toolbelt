@@ -14,7 +14,7 @@ export const SHEET_AVAILABLE = true;
  *
  * Returns false when the user dismisses the sheet, which is not an error.
  */
-export async function collectViaSheet(): Promise<boolean> {
+export async function collectViaSheet(): Promise<string | null> {
   const setup = await api.startCardSetup();
   if (!setup.publishable_key) {
     throw new Error("Card payments are not configured on the server yet");
@@ -33,8 +33,8 @@ export async function collectViaSheet(): Promise<boolean> {
 
   const { error } = await presentPaymentSheet();
   if (error) {
-    if (error.code === PaymentSheetError.Canceled) return false;
+    if (error.code === PaymentSheetError.Canceled) return null;
     throw new Error(error.message);
   }
-  return true;
+  return setup.setup_ref;
 }

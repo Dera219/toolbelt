@@ -12,10 +12,17 @@ class PaymentMethodIn(BaseModel):
 class CardSetupOut(BaseModel):
     """Native payment-sheet parameters. Publishable key is intentionally public."""
 
+    setup_ref: str
     setup_intent_client_secret: str
     customer_ephemeral_key_secret: str
     customer_ref: str
     publishable_key: str | None = None
+
+
+class ConfirmCardIn(BaseModel):
+    """Which setup completed. Optional: older clients fall back to a lookup."""
+
+    setup_ref: str | None = Field(default=None, max_length=200)
 
 
 class CardSetupSessionIn(BaseModel):

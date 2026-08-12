@@ -150,7 +150,7 @@ class StripePaymentProvider:
         decline that charge for missing prior authorization.
         """
         try:
-            intent = self._client.setup_intents.create(
+            intent = self._client.v1.setup_intents.create(
                 params={
                     "customer": customer_ref,
                     "usage": "off_session",
@@ -158,13 +158,14 @@ class StripePaymentProvider:
                 }
             )
             # The mobile SDK pins an API version; the ephemeral key must match it.
-            ephemeral = self._client.ephemeral_keys.create(
+            ephemeral = self._client.v1.ephemeral_keys.create(
                 params={"customer": customer_ref},
                 options={"stripe_version": MOBILE_SDK_API_VERSION},
             )
         except stripe.StripeError as exc:
             raise ProviderError(str(exc)) from exc
         return {
+            "setup_ref": intent.id,
             "setup_intent_client_secret": intent.client_secret,
             "customer_ephemeral_key_secret": ephemeral.secret,
             "customer_ref": customer_ref,
@@ -174,14 +175,16 @@ class StripePaymentProvider:
         """Stripe-hosted card entry — used on the web, where the native sheet
         does not exist. Card details go straight to Stripe, never through us."""
         try:
-            session = self._client.checkout.sessions.create(
+            session = self._client.v1.checkout.sessions.create(
                 params={
                     "mode": "setup",
                     "customer": customer_ref,
                     # Required in setup mode: Stripe uses it to decide which
                     # payment methods to offer, even though nothing is charged.
                     "currency": get_settings().default_currency,
-                    "success_url": f"{return_url}?card=saved",
+                    # The session id comes back so confirmation can resolve
+                    # exactly what was saved instead of guessing from a list.
+                    "success_url": f"{return_url}?card=saved&session_id={{CHECKOUT_SESSION_ID}}",
                     "cancel_url": f"{return_url}?card=cancelled",
                 }
             )
@@ -190,13 +193,35 @@ class StripePaymentProvider:
         return session.url
 
     def latest_payment_method(self, customer_ref: str) -> str | None:
+        """Any attached payment method, newest first.
+
+        Deliberately unfiltered by type: Stripe Checkout may save a Link
+        payment method rather than a raw card, and filtering on type="card"
+        silently returns nothing — the user sees "no card was saved" for a card
+        that saved perfectly well.
+        """
         try:
-            methods = self._client.payment_methods.list(
-                params={"customer": customer_ref, "type": "card", "limit": 1}
+            methods = self._client.v1.payment_methods.list(
+                params={"customer": customer_ref, "limit": 1}
             )
         except stripe.StripeError as exc:
             raise ProviderError(str(exc)) from exc
         return methods.data[0].id if methods.data else None
+
+    def payment_method_from_setup(self, setup_ref: str) -> str | None:
+        """Exact resolution: ask what this specific setup saved."""
+        try:
+            if setup_ref.startswith("cs_"):
+                session = self._client.v1.checkout.sessions.retrieve(setup_ref)
+                setup_ref = session.setup_intent or ""
+                if not setup_ref:
+                    return None
+            intent = self._client.v1.setup_intents.retrieve(setup_ref)
+        except stripe.StripeError as exc:
+            raise ProviderError(str(exc)) from exc
+        if intent.status != "succeeded":
+            return None
+        return intent.payment_method
 
     def set_default_payment_method(self, customer_ref: str, payment_method_ref: str) -> None:
         try:

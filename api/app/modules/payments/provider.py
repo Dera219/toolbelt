@@ -47,7 +47,13 @@ class PaymentProvider(Protocol):
         ...
 
     def latest_payment_method(self, customer_ref: str) -> str | None:
-        """The most recently attached card, used to confirm what the user saved."""
+        """Most recently attached payment method, of any type. Used only as a
+        fallback — the setup reference below is exact."""
+        ...
+
+    def payment_method_from_setup(self, setup_ref: str) -> str | None:
+        """Resolve what a completed setup actually saved. Accepts either a
+        setup-intent or a hosted-session reference."""
         ...
 
     def set_default_payment_method(self, customer_ref: str, payment_method_ref: str) -> None: ...
@@ -90,6 +96,7 @@ class FakePaymentProvider:
         self.enabled_accounts: set[str] = set()
         self.setups: list[tuple[str, str]] = []
         self.setup_sessions: list[tuple[str, str]] = []
+        self.setup_payment_methods: dict[str, str] = {}
         self.authorizations: list[dict] = []
         self.captures: list[str] = []
         self.releases: list[str] = []
@@ -128,6 +135,7 @@ class FakePaymentProvider:
         ref = self._ref("seti")
         self.setups.append((customer_ref, ref))
         return {
+            "setup_ref": ref,
             "setup_intent_client_secret": f"{ref}_secret_fake",
             "customer_ephemeral_key_secret": f"ek_fake_{self._seq}",
             "customer_ref": customer_ref,
@@ -141,6 +149,9 @@ class FakePaymentProvider:
     def latest_payment_method(self, customer_ref: str) -> str | None:
         saved = [pm for cus, pm in self.attached if cus == customer_ref]
         return saved[-1] if saved else None
+
+    def payment_method_from_setup(self, setup_ref: str) -> str | None:
+        return self.setup_payment_methods.get(setup_ref)
 
     def set_default_payment_method(self, customer_ref: str, payment_method_ref: str) -> None:
         self.attached.append((customer_ref, payment_method_ref))

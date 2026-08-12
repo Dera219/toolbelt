@@ -48,12 +48,41 @@ def test_confirm_records_the_card_the_provider_actually_has(client):
     assert resp.json()["default_payment_method_ref"] == "pm_saved_by_sheet"
 
 
+def test_confirm_resolves_the_exact_setup(client):
+    """Given a setup reference, use it rather than guessing from a list."""
+    headers = _user(client)
+    setup = client.post("/me/billing/card-setup", headers=headers).json()
+    _fake_provider.setup_payment_methods[setup["setup_ref"]] = "pm_from_this_setup"
+    # A different, newer method on the customer must NOT win over the exact one.
+    _fake_provider.attached.append((_fake_provider.customers[-1], "pm_something_else"))
+
+    resp = client.post(
+        "/me/billing/confirm-card", json={"setup_ref": setup["setup_ref"]}, headers=headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["default_payment_method_ref"] == "pm_from_this_setup"
+
+
+def test_non_card_payment_methods_are_accepted(client):
+    """Stripe Checkout can save a Link payment method rather than a raw card.
+    Filtering for cards made a successful save look like a failure."""
+    headers = _user(client)
+    setup = client.post("/me/billing/card-setup", headers=headers).json()
+    _fake_provider.setup_payment_methods[setup["setup_ref"]] = "pm_link_wallet"
+
+    resp = client.post(
+        "/me/billing/confirm-card", json={"setup_ref": setup["setup_ref"]}, headers=headers
+    )
+    assert resp.status_code == 200
+    assert resp.json()["default_payment_method_ref"] == "pm_link_wallet"
+
+
 def test_confirm_without_a_saved_card_is_rejected(client):
     headers = _user(client)
     client.post("/me/billing/card-setup", headers=headers)
     resp = client.post("/me/billing/confirm-card", headers=headers)
     assert resp.status_code == 409
-    assert "card" in resp.json()["detail"].lower()
+    assert "payment method" in resp.json()["detail"].lower()
 
 
 def test_confirm_before_setup_is_rejected(client):

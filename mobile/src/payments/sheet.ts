@@ -6,7 +6,7 @@
  * `sheet.native.ts` on iOS/Android and this file on web; callers fall back to
  * Stripe's hosted card page there.
  */
-export async function collectViaSheet(): Promise<boolean> {
+export async function collectViaSheet(): Promise<string | null> {
   throw new Error("The payment sheet is only available in the mobile app");
 }
 

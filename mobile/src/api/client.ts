@@ -225,6 +225,7 @@ export const api = {
   getBillingProfile: () => request<BillingProfile>("GET", "/me/billing/profile"),
   startCardSetup: () =>
     request<{
+      setup_ref: string;
       setup_intent_client_secret: string;
       customer_ephemeral_key_secret: string;
       customer_ref: string;
@@ -232,7 +233,8 @@ export const api = {
     }>("POST", "/me/billing/card-setup"),
   startCardSetupSession: (return_url: string) =>
     request<{ url: string }>("POST", "/me/billing/card-setup-session", { return_url }),
-  confirmCard: () => request<BillingProfile>("POST", "/me/billing/confirm-card"),
+  confirmCard: (setup_ref?: string) =>
+    request<BillingProfile>("POST", "/me/billing/confirm-card", { setup_ref: setup_ref ?? null }),
   setPaymentMethod: (ref: string) =>
     request<BillingProfile>("POST", "/me/payment-method", { payment_method_ref: ref }),
   createPayoutAccount: () => request<PayoutAccount>("POST", "/me/payout-account"),

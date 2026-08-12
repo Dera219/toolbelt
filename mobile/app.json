@@ -47,7 +47,8 @@
           "locationAlwaysAndWhenInUsePermission": "ToolBelt uses your location to show jobs near you and to set your service area."
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      "@stripe/stripe-react-native"
     ]
   }
 }

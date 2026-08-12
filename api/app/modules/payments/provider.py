@@ -36,6 +36,22 @@ class PaymentProvider(Protocol):
         expire and are single-use, so resuming always mints a new one."""
         ...
 
+    def create_card_setup(self, customer_ref: str) -> dict:
+        """Everything a native payment sheet needs to collect and save a card:
+        a setup-intent client secret, a short-lived customer key, and the
+        customer id. No card data ever reaches our server."""
+        ...
+
+    def create_card_setup_session(self, customer_ref: str, return_url: str) -> str:
+        """Hosted card-entry page URL — the browser equivalent of the sheet."""
+        ...
+
+    def latest_payment_method(self, customer_ref: str) -> str | None:
+        """The most recently attached card, used to confirm what the user saved."""
+        ...
+
+    def set_default_payment_method(self, customer_ref: str, payment_method_ref: str) -> None: ...
+
     def authorize(
         self, amount_cents: int, currency: str, customer_ref: str, payment_method_ref: str,
         metadata: dict,
@@ -72,6 +88,8 @@ class FakePaymentProvider:
         self.attached: list[tuple[str, str]] = []
         self.accounts: list[str] = []
         self.enabled_accounts: set[str] = set()
+        self.setups: list[tuple[str, str]] = []
+        self.setup_sessions: list[tuple[str, str]] = []
         self.authorizations: list[dict] = []
         self.captures: list[str] = []
         self.releases: list[str] = []
@@ -105,6 +123,27 @@ class FakePaymentProvider:
 
     def onboarding_link(self, account_ref: str) -> str:
         return f"https://onboarding.fake/{account_ref}"
+
+    def create_card_setup(self, customer_ref: str) -> dict:
+        ref = self._ref("seti")
+        self.setups.append((customer_ref, ref))
+        return {
+            "setup_intent_client_secret": f"{ref}_secret_fake",
+            "customer_ephemeral_key_secret": f"ek_fake_{self._seq}",
+            "customer_ref": customer_ref,
+        }
+
+    def create_card_setup_session(self, customer_ref: str, return_url: str) -> str:
+        ref = self._ref("cs")
+        self.setup_sessions.append((customer_ref, ref))
+        return f"https://checkout.fake/{ref}"
+
+    def latest_payment_method(self, customer_ref: str) -> str | None:
+        saved = [pm for cus, pm in self.attached if cus == customer_ref]
+        return saved[-1] if saved else None
+
+    def set_default_payment_method(self, customer_ref: str, payment_method_ref: str) -> None:
+        self.attached.append((customer_ref, payment_method_ref))
 
     def authorize(
         self, amount_cents: int, currency: str, customer_ref: str, payment_method_ref: str,

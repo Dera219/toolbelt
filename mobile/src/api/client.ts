@@ -222,6 +222,17 @@ export const api = {
   jobDispute: (jobId: number) => request<Dispute>("GET", `/jobs/${jobId}/dispute`),
 
   // payments
+  getBillingProfile: () => request<BillingProfile>("GET", "/me/billing/profile"),
+  startCardSetup: () =>
+    request<{
+      setup_intent_client_secret: string;
+      customer_ephemeral_key_secret: string;
+      customer_ref: string;
+      publishable_key: string | null;
+    }>("POST", "/me/billing/card-setup"),
+  startCardSetupSession: (return_url: string) =>
+    request<{ url: string }>("POST", "/me/billing/card-setup-session", { return_url }),
+  confirmCard: () => request<BillingProfile>("POST", "/me/billing/confirm-card"),
   setPaymentMethod: (ref: string) =>
     request<BillingProfile>("POST", "/me/payment-method", { payment_method_ref: ref }),
   createPayoutAccount: () => request<PayoutAccount>("POST", "/me/payout-account"),

@@ -9,6 +9,23 @@ class PaymentMethodIn(BaseModel):
     payment_method_ref: str = Field(min_length=1, max_length=64)
 
 
+class CardSetupOut(BaseModel):
+    """Native payment-sheet parameters. Publishable key is intentionally public."""
+
+    setup_intent_client_secret: str
+    customer_ephemeral_key_secret: str
+    customer_ref: str
+    publishable_key: str | None = None
+
+
+class CardSetupSessionIn(BaseModel):
+    return_url: str = Field(min_length=1, max_length=500)
+
+
+class CardSetupSessionOut(BaseModel):
+    url: str
+
+
 class BillingProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

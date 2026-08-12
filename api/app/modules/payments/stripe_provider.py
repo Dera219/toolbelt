@@ -21,6 +21,10 @@ against Stripe test mode; the test suite covers the domain via FakePaymentProvid
 import stripe
 
 from app.core.config import get_settings
+
+# Pinned by @stripe/stripe-react-native; the ephemeral key it receives must
+# be issued for the same API version or the sheet refuses to load.
+MOBILE_SDK_API_VERSION = "2024-06-20"
 from app.modules.payments.provider import ProviderError
 
 
@@ -137,6 +141,71 @@ class StripePaymentProvider:
             if node is None:
                 return False
         return getattr(node, "status", None) == "active"
+
+    def create_card_setup(self, customer_ref: str) -> dict:
+        """SetupIntent + ephemeral key for the native PaymentSheet.
+
+        `usage="off_session"` matters: the saved card is charged later, when the
+        customer accepts an offer and is not present. Without it Stripe may
+        decline that charge for missing prior authorization.
+        """
+        try:
+            intent = self._client.setup_intents.create(
+                params={
+                    "customer": customer_ref,
+                    "usage": "off_session",
+                    "automatic_payment_methods": {"enabled": True},
+                }
+            )
+            # The mobile SDK pins an API version; the ephemeral key must match it.
+            ephemeral = self._client.ephemeral_keys.create(
+                params={"customer": customer_ref},
+                options={"stripe_version": MOBILE_SDK_API_VERSION},
+            )
+        except stripe.StripeError as exc:
+            raise ProviderError(str(exc)) from exc
+        return {
+            "setup_intent_client_secret": intent.client_secret,
+            "customer_ephemeral_key_secret": ephemeral.secret,
+            "customer_ref": customer_ref,
+        }
+
+    def create_card_setup_session(self, customer_ref: str, return_url: str) -> str:
+        """Stripe-hosted card entry — used on the web, where the native sheet
+        does not exist. Card details go straight to Stripe, never through us."""
+        try:
+            session = self._client.checkout.sessions.create(
+                params={
+                    "mode": "setup",
+                    "customer": customer_ref,
+                    # Required in setup mode: Stripe uses it to decide which
+                    # payment methods to offer, even though nothing is charged.
+                    "currency": get_settings().default_currency,
+                    "success_url": f"{return_url}?card=saved",
+                    "cancel_url": f"{return_url}?card=cancelled",
+                }
+            )
+        except stripe.StripeError as exc:
+            raise ProviderError(str(exc)) from exc
+        return session.url
+
+    def latest_payment_method(self, customer_ref: str) -> str | None:
+        try:
+            methods = self._client.payment_methods.list(
+                params={"customer": customer_ref, "type": "card", "limit": 1}
+            )
+        except stripe.StripeError as exc:
+            raise ProviderError(str(exc)) from exc
+        return methods.data[0].id if methods.data else None
+
+    def set_default_payment_method(self, customer_ref: str, payment_method_ref: str) -> None:
+        try:
+            self._client.customers.update(
+                customer_ref,
+                params={"invoice_settings": {"default_payment_method": payment_method_ref}},
+            )
+        except stripe.StripeError as exc:
+            raise ProviderError(str(exc)) from exc
 
     def onboarding_link(self, account_ref: str) -> str:
         settings = get_settings()

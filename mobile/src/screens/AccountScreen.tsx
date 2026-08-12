@@ -5,6 +5,7 @@ import * as WebBrowser from "expo-web-browser";
 import React, { useCallback, useState } from "react";
 import { Text, View } from "react-native";
 import { ApiError, api, money } from "../api/client";
+import { collectCard } from "../payments/cardSetup";
 import type { Balance, BillingProfile, PayoutAccount } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import type { RootStackParamList } from "../navigation";
@@ -39,6 +40,7 @@ export default function AccountScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      api.getBillingProfile().then(setBilling).catch(() => setBilling(null));
       api.getPayoutAccount().then(setPayout).catch(() => setPayout(null));
       if (canWork) api.balance().then(setBalance).catch(() => setBalance(null));
     }, [canWork])
@@ -58,11 +60,12 @@ export default function AccountScreen() {
   };
 
   const addPaymentMethod = run(async () => {
-    // Dev flow: "pm_card_visa" is a real Stripe test-mode PaymentMethod, so this
-    // exercises the true attach path. Production opens the Stripe PaymentSheet
-    // and passes the tokenized method it returns instead.
-    setBilling(await api.setPaymentMethod("pm_card_visa"));
-    setNotice("Test card saved");
+    // Real card entry: Stripe's payment sheet on native, Stripe's hosted page on
+    // web. Card numbers never reach our servers.
+    const saved = await collectCard();
+    if (!saved) return; // user backed out — not an error
+    setBilling(await api.getBillingProfile().catch(() => null));
+    setNotice("Card saved");
   });
 
   const setUpPayouts = run(async () => {

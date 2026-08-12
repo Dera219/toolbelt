@@ -52,6 +52,66 @@ def set_payment_method(db: Session, user: User, payment_method_ref: str) -> Bill
     return profile
 
 
+def _billing_profile(db: Session, user: User) -> BillingProfile:
+    """Fetch or create the provider-side customer for this user."""
+    profile = db.get(BillingProfile, user.id)
+    if profile is None:
+        profile = BillingProfile(
+            user_id=user.id,
+            provider_customer_ref=get_payment_provider().create_customer(user.email),
+        )
+        db.add(profile)
+        db.flush()
+    return profile
+
+
+def start_card_setup(db: Session, user: User) -> dict:
+    """Native path: hand the app what its payment sheet needs. Card details go
+    from the device straight to the provider — they never touch this server."""
+    profile = _billing_profile(db, user)
+    try:
+        return get_payment_provider().create_card_setup(profile.provider_customer_ref)
+    except ProviderError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"Could not start setup: {exc}")
+
+
+def start_card_setup_session(db: Session, user: User, return_url: str) -> str:
+    """Web path: a provider-hosted card page, because the native sheet has no
+    browser equivalent."""
+    profile = _billing_profile(db, user)
+    try:
+        return get_payment_provider().create_card_setup_session(
+            profile.provider_customer_ref, return_url
+        )
+    except ProviderError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"Could not start setup: {exc}")
+
+
+def confirm_card_setup(db: Session, user: User) -> BillingProfile:
+    """Record whatever card the user actually saved.
+
+    Called after the sheet or hosted page reports success. We ask the provider
+    what is on the customer rather than trusting the client to tell us — a
+    client-supplied payment method id could point at someone else's card.
+    """
+    profile = db.get(BillingProfile, user.id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No billing profile")
+    provider = get_payment_provider()
+    try:
+        payment_method = provider.latest_payment_method(profile.provider_customer_ref)
+        if payment_method is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail="No card was saved. Try adding it again."
+            )
+        provider.set_default_payment_method(profile.provider_customer_ref, payment_method)
+    except ProviderError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"Could not confirm card: {exc}")
+    profile.default_payment_method_ref = payment_method
+    db.flush()
+    return profile
+
+
 def sync_payout_account(
     db: Session, user: User, *, release_funds: bool = False
 ) -> PayoutAccount | None:

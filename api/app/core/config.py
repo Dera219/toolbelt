@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     platform_fee_bps: int = 1500  # 15% take-rate on completed jobs
     payments_webhook_secret: str = "dev-webhook-secret-0123456789abcdef"
     stripe_secret_key: str | None = None
+    # Public by design — returned to the app so the native sheet can
+    # initialise without a second place to configure it.
+    stripe_publishable_key: str | None = None
 
     @model_validator(mode="after")
     def _prod_requires_strong_secret(self) -> "Settings":

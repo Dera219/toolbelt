@@ -16,6 +16,9 @@ from app.modules.payments.models import PayoutAccount, WebhookEvent
 from app.modules.payments.schemas import (
     BalanceOut,
     BillingProfileOut,
+    CardSetupOut,
+    CardSetupSessionIn,
+    CardSetupSessionOut,
     PaymentMethodIn,
     PaymentOut,
     PayoutAccountCreatedOut,
@@ -28,6 +31,35 @@ router = APIRouter()
 
 DbDep = Annotated[Session, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+@router.get("/me/billing/profile", response_model=BillingProfileOut)
+def get_billing_profile(user: CurrentUser, db: DbDep):
+    from app.modules.payments.models import BillingProfile
+
+    profile = db.get(BillingProfile, user.id)
+    if profile is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No payment method on file")
+    return profile
+
+
+@router.post("/me/billing/card-setup", response_model=CardSetupOut)
+def start_card_setup(user: CurrentUser, db: DbDep):
+    """Native card entry. The app opens Stripe's payment sheet with these."""
+    setup = service.start_card_setup(db, user)
+    return CardSetupOut(**setup, publishable_key=get_settings().stripe_publishable_key)
+
+
+@router.post("/me/billing/card-setup-session", response_model=CardSetupSessionOut)
+def start_card_setup_session(body: CardSetupSessionIn, user: CurrentUser, db: DbDep):
+    """Web card entry — a Stripe-hosted page the browser is redirected to."""
+    return CardSetupSessionOut(url=service.start_card_setup_session(db, user, body.return_url))
+
+
+@router.post("/me/billing/confirm-card", response_model=BillingProfileOut)
+def confirm_card(user: CurrentUser, db: DbDep):
+    """Called after the sheet or hosted page succeeds; records the saved card."""
+    return service.confirm_card_setup(db, user)
 
 
 @router.post("/me/payment-method", response_model=BillingProfileOut)

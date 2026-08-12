@@ -17,6 +17,7 @@ from app.modules.jobs import models as _jobs  # noqa: F401
 from app.modules.notifications import models as _notifications  # noqa: F401
 from app.modules.payments import models as _payments  # noqa: F401
 from app.modules.reputation import models as _reputation  # noqa: F401
+from app.modules.trust import models as _trust  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

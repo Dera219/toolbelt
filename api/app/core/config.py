@@ -42,7 +42,13 @@ class Settings(BaseSettings):
     connect_country: str = "us"
     default_currency: str = "usd"
     platform_fee_bps: int = 1500  # 15% take-rate on completed jobs
+    # Internal HMAC secret for POST /webhooks/payments — the fake-provider
+    # event shape the test suite drives. NOT a Stripe value.
     payments_webhook_secret: str = "dev-webhook-secret-0123456789abcdef"
+    # Signing secret (whsec_…) for POST /webhooks/stripe. Unset disables the
+    # route (it answers 503); payout state then relies on polling alone, which
+    # is correct but slower.
+    stripe_webhook_secret: str | None = None
     stripe_secret_key: str | None = None
     # Public by design — returned to the app so the native sheet can
     # initialise without a second place to configure it.

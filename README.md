@@ -113,3 +113,39 @@ Two traps worth knowing:
   for the exact steps and the sandbox/key-pairing pitfalls.
 
 Test cards: `4242 4242 4242 4242`, any future expiry, any CVC.
+
+## Database
+
+Development and production both run **Postgres**. Start it with
+`docker compose -f infra/docker-compose.yml up -d`, or locally:
+
+```bash
+brew install postgresql@16 && brew services start postgresql@16
+createdb -O toolbelt toolbelt
+cd api && .venv/bin/alembic upgrade head
+```
+
+Then set in `api/.env`:
+
+```
+TOOLBELT_DATABASE_URL=postgresql+psycopg://toolbelt:toolbelt-dev-only@localhost:5432/toolbelt
+```
+
+The test suite defaults to SQLite for speed; point it at Postgres with
+`TOOLBELT_TEST_DATABASE_URL=…` (CI runs both).
+
+**Why this matters:** the app creates tables with `create_all()` at startup, so a
+missing migration is invisible in development while breaking any deployment
+built from migrations. That happened — `alembic/env.py` did not import the trust
+models, so the `disputes` table was never in a migration. `tests/test_migrations.py`
+now builds a database from migrations alone and fails if it does not match the
+models. Any deployed database created before this fix needs
+`alembic upgrade head` to gain the disputes table.
+
+To copy an old SQLite dev database into Postgres:
+
+```bash
+cd api && .venv/bin/python scripts/sqlite_to_postgres.py \
+  "sqlite:///./toolbelt.db" \
+  "postgresql+psycopg://toolbelt:toolbelt-dev-only@localhost:5432/toolbelt"
+```

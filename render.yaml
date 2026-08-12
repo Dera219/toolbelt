@@ -1,8 +1,8 @@
 # Render Blueprint — provisions the API and its database in one step.
 #
 # Deploy: Render dashboard → New → Blueprint → connect this repo.
-# Everything below is created automatically. The three secrets marked
-# sync:false are prompted for at deploy time and never stored in git.
+# Everything below is created automatically. The secrets marked sync:false
+# are prompted for at deploy time and never stored in git.
 
 databases:
   - name: toolbelt-db
@@ -45,6 +45,14 @@ services:
       - key: TOOLBELT_STRIPE_SECRET_KEY
         sync: false
 
-      # Stripe webhook signing secret (whsec_…).
+      # Internal fake-provider webhook HMAC — NOT a Stripe value. Any long
+      # random string; nothing calls the endpoint in prod.
       - key: TOOLBELT_PAYMENTS_WEBHOOK_SECRET
+        sync: false
+
+      # Stripe endpoint signing secret (whsec_…) for POST /webhooks/stripe.
+      # Set after registering the endpoint in Stripe → Developers → Webhooks
+      # (event: account.updated). Unset = route answers 503 and payout state
+      # relies on polling, which is correct but slower.
+      - key: TOOLBELT_STRIPE_WEBHOOK_SECRET
         sync: false

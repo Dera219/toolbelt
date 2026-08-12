@@ -17,12 +17,13 @@ Postgres together. No CLI, no Docker locally.
 2. **New → Blueprint**, pick the `toolbelt` repo.
 3. Render reads `render.yaml` and shows what it will create: `toolbelt-api`
    (Docker web service) and `toolbelt-db` (Postgres 16).
-4. It prompts for the three secrets marked `sync: false`:
+4. It prompts for the secrets marked `sync: false`:
 
    | Variable | Value |
    |---|---|
    | `TOOLBELT_STRIPE_SECRET_KEY` | `sk_test_…` to start. Swap to live only when you actually take money. |
-   | `TOOLBELT_PAYMENTS_WEBHOOK_SECRET` | `whsec_…` from Stripe → Developers → Webhooks |
+   | `TOOLBELT_PAYMENTS_WEBHOOK_SECRET` | Internal fake-provider HMAC secret, **not** a Stripe value. Any long random string (`openssl rand -hex 32`). |
+   | `TOOLBELT_STRIPE_WEBHOOK_SECRET` | Leave blank now; set to the `whsec_…` from webhook registration (step 2 under "After the API is up"). Blank = the route answers 503 and polling covers payout state. |
    | `TOOLBELT_PUBLIC_BASE_URL` | Leave blank now; set in step 6. |
 
 5. Deploy. First build takes a few minutes.
@@ -59,7 +60,8 @@ fly postgres attach toolbelt-db
 fly secrets set TOOLBELT_ENVIRONMENT=prod \
                 TOOLBELT_JWT_SECRET="$(openssl rand -hex 32)" \
                 TOOLBELT_STRIPE_SECRET_KEY=sk_test_... \
-                TOOLBELT_PAYMENTS_WEBHOOK_SECRET=whsec_... \
+                TOOLBELT_PAYMENTS_WEBHOOK_SECRET="$(openssl rand -hex 32)" \
+                TOOLBELT_STRIPE_WEBHOOK_SECRET=whsec_... \
                 TOOLBELT_PUBLIC_BASE_URL=https://toolbelt-api.fly.dev
 fly deploy
 ```
@@ -85,15 +87,19 @@ fly deploy
 
 1. **Point the mobile app at it** — replace the placeholder hosts in
    `mobile/eas.json` (`staging.example.com`, `api.example.com`).
-2. **Do NOT register `/webhooks/payments` in Stripe.** The endpoint verifies a
-   plain HMAC in `X-Webhook-Signature` over an internal event shape — it cannot
-   consume Stripe's `Stripe-Signature` scheme or payload, so every delivery
-   would 400 and Stripe would eventually disable the endpoint. It exists for
-   the fake provider in tests. Correctness does not need it: the polling path
-   (`service.refresh_payout_status` → `flush_pending_payouts`) already flips
-   `payouts_enabled` and releases held payouts. If webhook latency is ever
-   wanted, first implement real Stripe signature verification + payload
-   translation in the payments module.
+2. **Register the Stripe webhook** — Stripe (test mode) → Developers →
+   Webhooks → add `https://<your-host>/webhooks/stripe`, listening for
+   `account.updated`. Put the endpoint's signing secret (`whsec_…`) in
+   `TOOLBELT_STRIPE_WEBHOOK_SECRET`. This is a latency optimization: the
+   polling path (`service.sync_payout_account` → `flush_pending_payouts`)
+   already flips `payouts_enabled` and releases held payouts, so a missed
+   delivery costs nothing but time. Until the secret is set the route answers
+   503, which shows up as delivery errors in the Stripe dashboard rather than
+   silently dropped events.
+
+   Register `/webhooks/stripe`, **not** `/webhooks/payments` — the latter
+   verifies a plain HMAC in `X-Webhook-Signature` over an internal event shape
+   for the fake provider in tests and would 400 every Stripe delivery.
 3. **Build the Android dev client** (`mobile/BUILDS.md`) and confirm a real
    phone receives a job notification.
 

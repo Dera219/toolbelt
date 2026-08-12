@@ -6,12 +6,19 @@ _TESTS_DIR = pathlib.Path(__file__).parent
 _API_DIR = _TESTS_DIR.parent
 sys.path.insert(0, str(_API_DIR))
 
-_TEST_DB = _TESTS_DIR / 'test_toolbelt.db'
-# Start every session from an empty file. A database left behind by an
-# interrupted run has stale schema and silently poisons the whole suite.
-for _leftover in _TEST_DB.parent.glob(_TEST_DB.name + '*'):
-    _leftover.unlink()
-os.environ["TOOLBELT_DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
+# Postgres is what production runs, so the suite should be able to run there
+# too: set TOOLBELT_TEST_DATABASE_URL to point at one. SQLite stays the default
+# because it needs no server and keeps the suite fast.
+_TEST_DB = _TESTS_DIR / "test_toolbelt.db"
+_PG_URL = os.environ.get("TOOLBELT_TEST_DATABASE_URL", "").strip()
+if _PG_URL:
+    os.environ["TOOLBELT_DATABASE_URL"] = _PG_URL
+else:
+    # Start every session from an empty file. A database left behind by an
+    # interrupted run has stale schema and silently poisons the whole suite.
+    for _leftover in _TEST_DB.parent.glob(_TEST_DB.name + "*"):
+        _leftover.unlink()
+    os.environ["TOOLBELT_DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
 os.environ["TOOLBELT_JWT_SECRET"] = "test-secret-not-for-prod-0123456789abcdef"
 os.environ["TOOLBELT_ENVIRONMENT"] = "test"
 os.environ["TOOLBELT_UPLOAD_DIR"] = str(_TESTS_DIR / "test_uploads")

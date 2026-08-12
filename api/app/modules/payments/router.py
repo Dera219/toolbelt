@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -133,6 +134,102 @@ async def payments_webhook(request: Request, db: DbDep):
             if account.payouts_enabled:
                 service.flush_pending_payouts(db, account.user_id)
     # Unknown event types are recorded and acknowledged — providers retry on non-2xx.
+    return {"status": "processed"}
+
+
+STRIPE_SIGNATURE_TOLERANCE_SECONDS = 300
+
+
+def _verify_stripe_signature(raw: bytes, header: str, secret: str) -> bool:
+    """Verify Stripe's `Stripe-Signature` scheme: `t=<unix seconds>,v1=<hex>`,
+    where the HMAC-SHA256 is computed over b"{t}.{raw body}". The timestamp
+    bounds how long a captured delivery can be replayed; multiple v1 entries
+    appear while signatures from a rotated secret are still being sent.
+    """
+    timestamp: str | None = None
+    candidates: list[str] = []
+    for element in header.split(","):
+        key, sep, value = element.strip().partition("=")
+        if not sep:
+            continue
+        if key == "t":
+            timestamp = value
+        elif key == "v1":
+            candidates.append(value)
+    if timestamp is None or not candidates:
+        return False
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False
+    if abs(time.time() - ts) > STRIPE_SIGNATURE_TOLERANCE_SECONDS:
+        return False
+    signed_payload = timestamp.encode() + b"." + raw
+    expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+    return any(hmac.compare_digest(candidate, expected) for candidate in candidates)
+
+
+def _stripe_transfers_active(account: dict) -> bool:
+    """Payouts-enabled criterion for a v2 core account payload — the same
+    configuration.recipient.capabilities.stripe_balance.stripe_transfers chain
+    StripePaymentProvider.payouts_enabled polls, walked defensively because an
+    account early in onboarding may omit any level of it. Falls back to the
+    flat v1 `payouts_enabled` bool so a v1-shaped payload still translates.
+    """
+    node: object = account.get("configuration")
+    for key in ("recipient", "capabilities", "stripe_balance", "stripe_transfers"):
+        if not isinstance(node, dict):
+            break
+        node = node.get(key)
+    else:
+        if isinstance(node, dict) and node.get("status") == "active":
+            return True
+    return account.get("payouts_enabled") is True
+
+
+@router.post("/webhooks/stripe")
+async def stripe_webhook(request: Request, db: DbDep):
+    """Stripe's delivery path for the onboarding signal /webhooks/payments
+    models internally. Latency optimization only: polling
+    (service.sync_payout_account) keeps payout state correct without it, so a
+    missed delivery costs nothing but time.
+    """
+    secret = get_settings().stripe_webhook_secret
+    if not secret:
+        # Fail loudly rather than accept unverifiable events: registering the
+        # endpoint in Stripe before configuring the secret should surface as
+        # delivery errors in the Stripe dashboard, not silently dropped signals.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail="Stripe webhook secret not configured"
+        )
+    raw = await request.body()
+    if not _verify_stripe_signature(raw, request.headers.get("Stripe-Signature", ""), secret):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
+    try:
+        event = json.loads(raw)
+        event_id, event_type = event["id"], event["type"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Malformed event")
+    if not isinstance(event_id, str) or not isinstance(event_type, str):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Malformed event")
+
+    if db.get(WebhookEvent, event_id) is not None:
+        return {"status": "duplicate"}
+    db.add(WebhookEvent(id=event_id, event_type=event_type))
+
+    data = event.get("data")
+    account_obj = data.get("object") if isinstance(data, dict) else None
+    if event_type == "account.updated" and isinstance(account_obj, dict):
+        account = (
+            db.query(PayoutAccount)
+            .filter_by(provider_account_ref=account_obj.get("id"))
+            .one_or_none()
+        )
+        if account is not None:
+            account.payouts_enabled = _stripe_transfers_active(account_obj)
+            if account.payouts_enabled:
+                service.flush_pending_payouts(db, account.user_id)
+    # Unknown event types are recorded and acknowledged — Stripe retries on non-2xx.
     return {"status": "processed"}
 
 

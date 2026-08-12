@@ -59,3 +59,37 @@ Environment variables (prefix `TOOLBELT_`, or an `api/.env` file):
 | `TOOLBELT_STRIPE_SECRET_KEY` | unset | Enables the real Stripe provider |
 | `TOOLBELT_PAYMENTS_WEBHOOK_SECRET` | dev-only value | HMAC key for `/webhooks/payments` |
 | `TOOLBELT_PLATFORM_FEE_BPS` | `1500` | Platform take-rate in basis points |
+
+## Social sign-in setup
+
+Client IDs are public identifiers, not secrets — the server verifies every token
+against the provider independently, so a wrong value fails closed.
+
+**Google** (free, ~10 minutes): [console.cloud.google.com](https://console.cloud.google.com)
+→ APIs & Services → Credentials → Create OAuth client ID → **Web application**.
+Add `http://localhost:8081` as both an authorized JavaScript origin and a
+redirect URI. Then:
+
+```bash
+# api/.env
+TOOLBELT_GOOGLE_CLIENT_IDS=<client-id>.apps.googleusercontent.com
+
+# mobile/.env
+EXPO_PUBLIC_GOOGLE_CLIENT_ID=<client-id>.apps.googleusercontent.com
+```
+
+Restart both servers. `GET /auth/providers` lists what the app will show; a
+provider with no client ID is hidden and refuses tokens (501).
+
+**Microsoft**: same shape, registered at [entra.microsoft.com](https://entra.microsoft.com).
+No domain or payment needed for development.
+
+**Apple**: requires the $99/yr Apple Developer Program. Native iOS needs only a
+bundle ID; the web flow additionally needs a verified domain.
+
+Notes:
+- The implicit ID-token flow is used deliberately (a mobile client cannot hold a
+  client secret). PKCE must stay **off** for it — `code_challenge_method` is only
+  valid for the code flow and providers reject the request outright.
+- RS256 verification needs `PyJWT[crypto]`. Without it every sign-in fails with a
+  generic "invalid token"; the API now refuses to start in that state.

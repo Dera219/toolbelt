@@ -50,6 +50,11 @@ export async function signInWithProvider(provider: SocialProvider): Promise<stri
     redirectUri,
     scopes: ["openid", "email", "profile"],
     responseType: AuthSession.ResponseType.IdToken,
+    // PKCE is on by default and sends code_challenge_method, which is only
+    // valid for the authorization-code flow — Google rejects the request
+    // outright with invalid_request. The implicit ID-token flow is protected
+    // by the nonce instead, which the provider binds into the token.
+    usePKCE: false,
     extraParams: { nonce: Crypto.randomUUID() },
   });
 

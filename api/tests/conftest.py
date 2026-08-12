@@ -45,6 +45,13 @@ def _resolve_stripe_key() -> str:
 STRIPE_TEST_KEY = _resolve_stripe_key()
 os.environ["TOOLBELT_STRIPE_SECRET_KEY"] = ""
 
+# Same hazard for social sign-in: a real client ID in .env would make the
+# suite's expectations depend on whether the developer happens to have
+# configured Google. Tests drive the provider list explicitly instead.
+os.environ["TOOLBELT_GOOGLE_CLIENT_IDS"] = ""
+os.environ["TOOLBELT_APPLE_CLIENT_IDS"] = ""
+os.environ["TOOLBELT_MICROSOFT_CLIENT_IDS"] = ""
+
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 

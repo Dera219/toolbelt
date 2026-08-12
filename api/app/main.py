@@ -30,6 +30,9 @@ async def lifespan(_app: FastAPI):
     # create tables outside migration control and can mask a failed migration.
     if get_settings().environment != "prod":
         Base.metadata.create_all(engine)
+    from app.modules.identity.oidc import check_signing_support
+
+    check_signing_support()
     yield
 
 

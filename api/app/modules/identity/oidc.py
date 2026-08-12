@@ -14,6 +14,7 @@ signed ID token server-side gives the same assurance without the secret.
 from __future__ import annotations
 
 import enum
+import logging
 from dataclasses import dataclass
 
 import jwt
@@ -27,6 +28,9 @@ class Provider(str, enum.Enum):
     GOOGLE = "google"
     APPLE = "apple"
     MICROSOFT = "microsoft"
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,26 @@ def _check_issuer(provider: Provider, issuer: str) -> bool:
     return issuer in config.issuers
 
 
+def check_signing_support() -> None:
+    """Fail loudly at startup if RS256 verification is unavailable.
+
+    PyJWT silently ships without `cryptography`, and the only symptom is every
+    social sign-in returning "invalid token" at runtime — which reads like a
+    misconfigured client ID and sends you looking in the wrong place.
+    """
+    if not configured_audiences_any():
+        return
+    if "RS256" not in jwt.algorithms.get_default_algorithms():
+        raise RuntimeError(
+            "Social sign-in is configured but PyJWT cannot verify RS256 tokens. "
+            "Install the crypto extra:  pip install 'PyJWT[crypto]'"
+        )
+
+
+def configured_audiences_any() -> bool:
+    return any(configured_audiences(p) for p in Provider)
+
+
 def verify_id_token(provider: Provider, id_token: str) -> SocialIdentity:
     audiences = configured_audiences(provider)
     if not audiences:
@@ -118,6 +142,14 @@ def verify_id_token(provider: Provider, id_token: str) -> SocialIdentity:
             options={"require": ["exp", "iss", "sub"]},
         )
     except jwt.PyJWTError as exc:
+        # Log why — never the token itself. Without this the operator sees only
+        # "invalid token" and cannot tell an audience mismatch from a bad clock.
+        logger.warning(
+            "%s ID token rejected: %s: %s",
+            PROVIDERS[provider].label,
+            type(exc).__name__,
+            exc,
+        )
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail=f"Invalid {PROVIDERS[provider].label} token"
         ) from exc

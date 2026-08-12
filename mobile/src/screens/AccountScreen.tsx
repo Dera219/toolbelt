@@ -2,10 +2,10 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { LinearGradient } from "expo-linear-gradient";
 import * as WebBrowser from "expo-web-browser";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Text, View } from "react-native";
 import { ApiError, api, money } from "../api/client";
-import { collectCard } from "../payments/cardSetup";
+import { collectCard, resumeCardSetup } from "../payments/cardSetup";
 import type { Balance, BillingProfile, PayoutAccount } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import type { RootStackParamList } from "../navigation";
@@ -59,11 +59,25 @@ export default function AccountScreen() {
     }
   };
 
+  // Stripe redirects the whole page back here after hosted card entry; pick
+  // that result up on mount so the user sees an outcome rather than silence.
+  useEffect(() => {
+    resumeCardSetup()
+      .then((message) => {
+        if (!message) return;
+        setNotice(message);
+        api.getBillingProfile().then(setBilling).catch(() => {});
+      })
+      .catch(() => {});
+  }, []);
+
   const addPaymentMethod = run(async () => {
     // Real card entry: Stripe's payment sheet on native, Stripe's hosted page on
     // web. Card numbers never reach our servers.
     const saved = await collectCard();
-    if (!saved) return; // user backed out — not an error
+    // On web the page navigates to Stripe and never gets here; the result is
+    // handled by resumeCardSetup() when Stripe redirects back.
+    if (!saved) return;
     setBilling(await api.getBillingProfile().catch(() => null));
     setNotice("Card saved");
   });

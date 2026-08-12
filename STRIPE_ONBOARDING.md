@@ -124,3 +124,51 @@ That is the normal structure for this model and the right default, but it is a
 real liability that should be priced into the 15% and covered explicitly in the
 terms of service. Worth a conversation with a lawyer before the pilot, not
 before the test transaction.
+
+---
+
+## Enabling Connect (required before workers can be paid)
+
+Connect powers worker payouts. Without it, `POST /me/payout-account` fails with
+`non_connect_platform_accounts_v2_access_blocked` and earnings sit on the
+worker's ledger balance forever.
+
+Steps, as actually performed on 2026-08-12:
+
+1. Dashboard → **Connect** → **Get started**.
+2. Stripe offers to **switch to an "onboarding sandbox"**. Its Connect wizard
+   only runs there — "Stay here" dismisses the dialog without progressing.
+   Switching is therefore unavoidable, and it means the sandbox you end up on
+   is **not** the one whose keys you may already have configured.
+3. **Choose your business model → Marketplace.**
+   Marketplace is correct for ToolBelt: the platform charges the customer, keeps
+   the fee, and transfers the remainder to the worker. *Platform* would mean
+   workers collect payments directly from customers, which is a different
+   product and a different money flow.
+4. Copy that sandbox's **publishable and secret keys** into `api/.env` and
+   `mobile/.env` (see the key-pairing warning below).
+5. Clear any billing profiles, payout accounts, payments, and ledger entries
+   created against the previous sandbox — the Stripe objects they reference do
+   not exist in the new one.
+
+Verify with `pytest tests/test_stripe_provider.py`, which exercises account
+creation and onboarding links against live test mode.
+
+## Keys must be paired from the same account
+
+`sk_test_…` and `pk_test_…` embed an account fragment right after the prefix:
+
+```
+sk_test_51U3V6o4kwBzxDoaE…
+         ^^^^^^^^^^^^^^^^ must match
+pk_test_51U3V6o4kwBzxDoaE…
+```
+
+Mixing keys from two Stripe accounts (easy to do — a new sandbox looks identical
+to the old one) fails at runtime with "no such customer", which reads like a
+data bug rather than a configuration one. Check the fragments before debugging
+anything else.
+
+Sandboxes are fully separate environments: customers, saved cards, connected
+accounts, and payments do **not** carry across. Switching sandboxes means
+re-adding test cards and re-running onboarding.

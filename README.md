@@ -57,6 +57,7 @@ Environment variables (prefix `TOOLBELT_`, or an `api/.env` file):
 | `TOOLBELT_JWT_SECRET` | dev-only value | **Required in prod**, ≥32 random bytes |
 | `TOOLBELT_ENVIRONMENT` | `dev` | `dev` / `test` / `prod` |
 | `TOOLBELT_STRIPE_SECRET_KEY` | unset | Enables the real Stripe provider |
+| `TOOLBELT_STRIPE_PUBLISHABLE_KEY` | unset | Returned to the app for the native payment sheet; public by design |
 | `TOOLBELT_PAYMENTS_WEBHOOK_SECRET` | dev-only value | HMAC key for `/webhooks/payments` |
 | `TOOLBELT_PLATFORM_FEE_BPS` | `1500` | Platform take-rate in basis points |
 
@@ -93,3 +94,22 @@ Notes:
   valid for the code flow and providers reject the request outright.
 - RS256 verification needs `PyJWT[crypto]`. Without it every sign-in fails with a
   generic "invalid token"; the API now refuses to start in that state.
+
+## Card entry and payouts
+
+Card details never reach this server. Native builds open Stripe's PaymentSheet;
+the web build uses Stripe's hosted card page, because `@stripe/stripe-react-native`
+has no browser implementation — see `mobile/src/payments/`. Both return a
+reference to the completed setup, which the server resolves against Stripe
+before storing anything.
+
+Two traps worth knowing:
+
+- **Saved payment methods are not always cards.** Stripe Checkout may save a
+  *Link* payment method. Filtering lookups by `type="card"` makes a successful
+  save look like a failure.
+- **Worker payouts need Connect enabled** on the Stripe account, with the
+  **Marketplace** business model. See [STRIPE_ONBOARDING.md](STRIPE_ONBOARDING.md)
+  for the exact steps and the sandbox/key-pairing pitfalls.
+
+Test cards: `4242 4242 4242 4242`, any future expiry, any CVC.

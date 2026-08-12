@@ -1,11 +1,18 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { api, setAuthToken } from "../api/client";
+import {
+  api,
+  setAuthToken,
+  setRefreshToken,
+  setSessionLostHandler,
+  setTokenRotationHandler,
+} from "../api/client";
 import type { Role, User } from "../api/types";
 import { registerForPush, unregisterPush } from "../push";
 import { tokenStore } from "./storage";
 
 export type Mode = "customer" | "worker";
 const TOKEN_KEY = "toolbelt_token";
+const REFRESH_KEY = "toolbelt_refresh";
 const MODE_KEY = "toolbelt_mode";
 
 interface AuthState {
@@ -31,6 +38,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const token = await tokenStore.get(TOKEN_KEY);
+        const refresh = await tokenStore.get(REFRESH_KEY);
+        if (refresh) setRefreshToken(refresh);
         if (token) {
           setAuthToken(token);
           setUser(await api.me());
@@ -40,7 +49,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         setAuthToken(null);
+        setRefreshToken(null);
         await tokenStore.remove(TOKEN_KEY);
+        await tokenStore.remove(REFRESH_KEY);
       } finally {
         setBooting(false);
       }
@@ -48,9 +59,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const { access_token } = await api.login(email, password);
+    const { access_token, refresh_token } = await api.login(email, password);
     setAuthToken(access_token);
+    setRefreshToken(refresh_token);
     await tokenStore.set(TOKEN_KEY, access_token);
+    await tokenStore.set(REFRESH_KEY, refresh_token);
     const me = await api.me();
     setUser(me);
     if (me.role === "worker") setModeState("worker");
@@ -82,6 +95,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const setMode = useCallback((next: Mode) => {
     setModeState(next);
     tokenStore.set(MODE_KEY, next).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setTokenRotationHandler((access, refresh) => {
+      tokenStore.set(TOKEN_KEY, access).catch(() => {});
+      tokenStore.set(REFRESH_KEY, refresh).catch(() => {});
+    });
+    setSessionLostHandler(() => {
+      // Refresh failed or the family was revoked — drop to the login screen.
+      setAuthToken(null);
+      setRefreshToken(null);
+      setUser(null);
+      tokenStore.remove(TOKEN_KEY).catch(() => {});
+      tokenStore.remove(REFRESH_KEY).catch(() => {});
+    });
+    return () => {
+      setTokenRotationHandler(null);
+      setSessionLostHandler(null);
+    };
   }, []);
 
   const canWork = user?.role === "worker" || user?.role === "both";

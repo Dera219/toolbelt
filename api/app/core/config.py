@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     max_search_radius_km: float = 100.0
     # Storage
     upload_dir: str = "./uploads"
+    # Rate limiting. Redis is required in prod: without shared counters, every
+    # extra worker multiplies the effective limit.
+    rate_limit_enabled: bool = True
+    redis_url: str | None = None
+    trust_proxy_headers: bool = False
+    # Sessions
+    refresh_token_expire_days: int = 30
     # Public origin, used to build URLs a third party redirects back to
     # (currently Stripe Connect onboarding return/refresh).
     public_base_url: str = "http://localhost:8000"

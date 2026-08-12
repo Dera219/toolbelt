@@ -1,20 +1,23 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.ratelimit import rate_limit
 from app.core.security import (
     create_access_token,
     get_current_user,
     hash_password,
     verify_password,
 )
-from app.modules.identity import otp
+from app.modules.identity import otp, sessions
 from app.modules.identity.models import User, VettingStatus, WorkerProfile
 from app.modules.identity.schemas import (
     LoginIn,
+    RefreshIn,
     PhoneRequestIn,
     PhoneVerifyIn,
     RegisterIn,
@@ -30,7 +33,12 @@ DbDep = Annotated[Session, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-@router.post("/auth/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/auth/register",
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[rate_limit("register", 20, 3600)],
+)
 def register(body: RegisterIn, db: DbDep):
     email = body.email.lower()
     exists = db.scalar(select(User.id).where(User.email == email))
@@ -54,7 +62,11 @@ def register(body: RegisterIn, db: DbDep):
     return user
 
 
-@router.post("/auth/login", response_model=TokenOut)
+@router.post(
+    "/auth/login",
+    response_model=TokenOut,
+    dependencies=[rate_limit("login", 10, 300)],
+)
 def login(body: LoginIn, db: DbDep):
     user = db.scalar(select(User).where(User.email == body.email.lower()))
     # Verify against a constant dummy hash on miss so response timing does not
@@ -64,10 +76,42 @@ def login(body: LoginIn, db: DbDep):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    return TokenOut(access_token=create_access_token(user.id))
+    return TokenOut(
+        access_token=create_access_token(user.id),
+        refresh_token=sessions.issue(db, user),
+    )
 
 
 _DUMMY_HASH = hash_password("timing-equalizer-dummy")
+
+
+@router.post(
+    "/auth/refresh",
+    responses={200: {"model": TokenOut}},
+    dependencies=[rate_limit("refresh", 60, 3600)],
+)
+def refresh_session(body: RefreshIn, db: DbDep):
+    try:
+        user, new_token = sessions.rotate(db, body.refresh_token)
+    except sessions.SessionReplayed:
+        # Returned, not raised: the family revocation must commit with this
+        # request, and raising would roll it back.
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Session revoked — please sign in again"},
+        )
+    return TokenOut(access_token=create_access_token(user.id), refresh_token=new_token)
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(body: RefreshIn, db: DbDep):
+    sessions.revoke(db, body.refresh_token)
+
+
+@router.post("/me/sessions/revoke-all", status_code=status.HTTP_200_OK)
+def revoke_all_sessions(user: CurrentUser, db: DbDep):
+    """Sign out everywhere — the control you want after losing a phone."""
+    return {"revoked": sessions.revoke_all_for_user(db, user)}
 
 
 @router.get("/me", response_model=UserOut)
@@ -117,7 +161,11 @@ def submit_vetting(user: CurrentUser, db: DbDep):
     return profile
 
 
-@router.post("/me/phone/request-verification", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/me/phone/request-verification",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[rate_limit("otp_request", 5, 3600)],
+)
 def request_phone_verification(body: PhoneRequestIn, user: CurrentUser, db: DbDep):
     otp.request_verification(db, user, body.phone)
     return {"detail": "Verification code sent"}

@@ -25,11 +25,64 @@ export class ApiError extends Error {
 }
 
 let authToken: string | null = null;
+let refreshToken: string | null = null;
+let onSessionLost: (() => void) | null = null;
+let refreshInFlight: Promise<boolean> | null = null;
+
 export const setAuthToken = (token: string | null) => {
   authToken = token;
 };
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export const setRefreshToken = (token: string | null) => {
+  refreshToken = token;
+};
+
+/** Called when the session cannot be renewed and the user must sign in again. */
+export const setSessionLostHandler = (handler: (() => void) | null) => {
+  onSessionLost = handler;
+};
+
+/** Persisted by AuthContext whenever rotation produces a new refresh token. */
+let onTokensRotated: ((access: string, refresh: string) => void) | null = null;
+export const setTokenRotationHandler = (
+  handler: ((access: string, refresh: string) => void) | null
+) => {
+  onTokensRotated = handler;
+};
+
+/**
+ * Exchange the refresh token for a new pair. Concurrent 401s share one attempt,
+ * so a screen firing three requests does not burn three rotations — and since
+ * the server revokes the whole family when a spent token is replayed, racing
+ * refreshes would otherwise log the user out.
+ */
+async function refreshSession(): Promise<boolean> {
+  if (refreshToken == null) return false;
+  if (refreshInFlight != null) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    try {
+      const resp = await fetch(`${API_URL}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!resp.ok) return false;
+      const data = (await resp.json()) as { access_token: string; refresh_token: string };
+      authToken = data.access_token;
+      refreshToken = data.refresh_token;
+      onTokensRotated?.(data.access_token, data.refresh_token);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
   let resp: Response;
   try {
     resp = await fetch(`${API_URL}${path}`, {
@@ -42,6 +95,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     });
   } catch {
     throw new ApiError(0, "Cannot reach the server. Is the API running?");
+  }
+  // Access tokens live 15 minutes; renew once and replay the request rather
+  // than bouncing the user to the login screen mid-task.
+  if (resp.status === 401 && retry && refreshToken != null && !path.startsWith("/auth/")) {
+    if (await refreshSession()) return request<T>(method, path, body, false);
+    onSessionLost?.();
   }
   if (!resp.ok) {
     let detail = `Request failed (${resp.status})`;
@@ -63,7 +122,12 @@ export const api = {
   register: (body: { email: string; password: string; full_name: string; role: Role }) =>
     request<User>("POST", "/auth/register", body),
   login: (email: string, password: string) =>
-    request<{ access_token: string }>("POST", "/auth/login", { email, password }),
+    request<{ access_token: string; refresh_token: string }>("POST", "/auth/login", {
+      email,
+      password,
+    }),
+  logout: (refresh_token: string) => request<void>("POST", "/auth/logout", { refresh_token }),
+  revokeAllSessions: () => request<{ revoked: number }>("POST", "/me/sessions/revoke-all"),
   me: () => request<User>("GET", "/me"),
   requestPhoneCode: (phone: string) =>
     request<{ detail: string }>("POST", "/me/phone/request-verification", { phone }),

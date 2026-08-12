@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.ratelimit import rate_limit
 from app.core.security import get_current_user
 from app.modules.identity.models import User
 from app.modules.jobs import service
@@ -26,7 +27,12 @@ DbDep = Annotated[Session, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-@router.post("/jobs", response_model=JobOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/jobs",
+    response_model=JobOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[rate_limit("post_job", 20, 3600)],
+)
 def create_job(body: JobCreateIn, user: CurrentUser, db: DbDep):
     return service.create_job(db, user, body)
 
@@ -109,7 +115,12 @@ async def upload_job_photo(job_id: int, file: UploadFile, user: CurrentUser, db:
     return photo
 
 
-@router.post("/jobs/{job_id}/offers", response_model=OfferOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/jobs/{job_id}/offers",
+    response_model=OfferOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[rate_limit("offer", 30, 3600)],
+)
 def make_offer(job_id: int, body: OfferCreateIn, user: CurrentUser, db: DbDep):
     return service.make_offer(db, user, job_id, body)
 

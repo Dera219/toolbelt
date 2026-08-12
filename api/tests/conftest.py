@@ -6,7 +6,12 @@ _TESTS_DIR = pathlib.Path(__file__).parent
 _API_DIR = _TESTS_DIR.parent
 sys.path.insert(0, str(_API_DIR))
 
-os.environ["TOOLBELT_DATABASE_URL"] = f"sqlite:///{_TESTS_DIR / 'test_toolbelt.db'}"
+_TEST_DB = _TESTS_DIR / 'test_toolbelt.db'
+# Start every session from an empty file. A database left behind by an
+# interrupted run has stale schema and silently poisons the whole suite.
+for _leftover in _TEST_DB.parent.glob(_TEST_DB.name + '*'):
+    _leftover.unlink()
+os.environ["TOOLBELT_DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
 os.environ["TOOLBELT_JWT_SECRET"] = "test-secret-not-for-prod-0123456789abcdef"
 os.environ["TOOLBELT_ENVIRONMENT"] = "test"
 os.environ["TOOLBELT_UPLOAD_DIR"] = str(_TESTS_DIR / "test_uploads")
@@ -54,11 +59,13 @@ BALTIMORE = {"lat": 39.2904, "lng": -76.6122}  # ~44 km from UMD
 
 @pytest.fixture()
 def clean_db():
+    from app.core.ratelimit import reset_rate_limits
     from app.modules.payments.provider import _fake_provider
 
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     _fake_provider.reset()
+    reset_rate_limits()  # counters are per-process; isolate each test
     yield
 
 

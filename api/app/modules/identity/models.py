@@ -70,6 +70,26 @@ class PhoneVerification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class RefreshToken(Base):
+    """A rotating session credential. Only the SHA-256 of the token is stored, so
+    a database leak cannot be replayed as a login.
+
+    Rotation: refreshing revokes the presented token and issues a new one. If a
+    already-revoked token is presented, the whole family is revoked — that is the
+    signature of a stolen token being replayed alongside the legitimate client.
+    """
+
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    family_id: Mapped[str] = mapped_column(String(32), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class WorkerProfile(Base):
     __tablename__ = "worker_profiles"
 

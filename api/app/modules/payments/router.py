@@ -48,7 +48,9 @@ def create_payout_account(user: CurrentUser, db: DbDep):
 
 @router.get("/me/payout-account", response_model=PayoutAccountOut)
 def get_payout_account(user: CurrentUser, db: DbDep):
-    account = db.get(PayoutAccount, user.id)
+    # Re-checks the provider when onboarding is still incomplete, so finishing
+    # Stripe's hosted flow is reflected without waiting on a webhook.
+    account = service.sync_payout_account(db, user)
     if account is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No payout account")
     return account

@@ -1,6 +1,8 @@
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.core.db import Base, engine
@@ -12,6 +14,7 @@ from app.modules.chat import models as chat_models  # noqa: F401  (register tabl
 from app.modules.chat.router import router as chat_router
 from app.modules.notifications.router import router as notifications_router
 from app.modules.payments import models as payments_models  # noqa: F401  (register tables)
+from app.modules.payments.provider import ProviderError
 from app.modules.payments.router import router as payments_router
 from app.modules.reputation import models as reputation_models  # noqa: F401  (register tables)
 from app.modules.reputation.router import router as reputation_router
@@ -59,6 +62,18 @@ app.include_router(notifications_router, tags=["notifications"])
 app.include_router(payments_router, tags=["payments"])
 app.include_router(disputes_router, tags=["disputes"])
 app.include_router(trust_router, tags=["admin"])
+
+
+@app.exception_handler(ProviderError)
+async def provider_error_handler(_request: Request, exc: ProviderError):
+    """A payment provider failure is an upstream fault, not a crash. Returning a
+    real response also keeps CORS headers attached — without this the browser
+    reports a bare 500 as an unreachable server."""
+    logging.getLogger(__name__).warning("payment provider error: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        content={"detail": f"Payment provider error: {exc}"},
+    )
 
 
 @app.get("/health", tags=["ops"])

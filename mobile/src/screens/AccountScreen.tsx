@@ -57,10 +57,11 @@ export default function AccountScreen() {
   };
 
   const addPaymentMethod = run(async () => {
-    // Dev flow: the fake provider accepts any ref. In production this button opens
-    // the Stripe PaymentSheet and passes the tokenized payment method ref instead.
-    setBilling(await api.setPaymentMethod("pm_card_dev"));
-    setNotice("Payment method saved");
+    // Dev flow: "pm_card_visa" is a real Stripe test-mode PaymentMethod, so this
+    // exercises the true attach path. Production opens the Stripe PaymentSheet
+    // and passes the tokenized method it returns instead.
+    setBilling(await api.setPaymentMethod("pm_card_visa"));
+    setNotice("Test card saved");
   });
 
   const setUpPayouts = run(async () => {

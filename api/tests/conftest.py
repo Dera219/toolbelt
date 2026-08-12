@@ -62,6 +62,13 @@ def clean_db():
     from app.core.ratelimit import reset_rate_limits
     from app.modules.payments.provider import _fake_provider
 
+    # Drop every pooled connection first. SQLite serializes writes at the file
+    # level, and a connection left in the pool from the previous test can still
+    # hold a read transaction — which makes drop_all() a silent no-op and leaks
+    # the previous test's rows into this one. The symptom is a flaky
+    # "UNIQUE constraint failed: users.email" that gets worse the faster the
+    # suite runs.
+    engine.dispose()
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     _fake_provider.reset()

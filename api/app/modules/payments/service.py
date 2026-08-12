@@ -34,18 +34,48 @@ def set_payment_method(db: Session, user: User, payment_method_ref: str) -> Bill
             user_id=user.id, provider_customer_ref=provider.create_customer(user.email)
         )
         db.add(profile)
-    provider.attach_payment_method(profile.provider_customer_ref, payment_method_ref)
-    profile.default_payment_method_ref = payment_method_ref
+        db.flush()
+    try:
+        attached_ref = provider.attach_payment_method(
+            profile.provider_customer_ref, payment_method_ref
+        )
+    except ProviderError as exc:
+        # A rejected card is the user's problem to fix, not a server fault.
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, detail=f"Card rejected: {exc}")
+    # Store what the provider actually attached, not what the client submitted.
+    profile.default_payment_method_ref = attached_ref
     db.flush()
     return profile
 
 
+def sync_payout_account(db: Session, user: User) -> PayoutAccount | None:
+    """Refresh payouts_enabled from the provider, paying out anything that was
+    waiting on onboarding. Cheap enough to run whenever the account is read."""
+    account = db.get(PayoutAccount, user.id)
+    if account is None or account.payouts_enabled:
+        return account
+    try:
+        enabled = get_payment_provider().payouts_enabled(account.provider_account_ref)
+    except ProviderError:
+        return account  # provider hiccup must not break the screen
+    if enabled:
+        account.payouts_enabled = True
+        db.flush()
+        flush_pending_payouts(db, user.id)
+    return account
+
+
 def create_payout_account(db: Session, user: User) -> tuple[PayoutAccount, str]:
+    """Create the connected account, or hand back a fresh onboarding link for an
+    existing one. Stripe's links are single-use and short-lived, so an account
+    that exists but is not yet enabled still needs a new link every time."""
     if not user.can_work:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Workers only")
-    account = db.get(PayoutAccount, user.id)
+    account = sync_payout_account(db, user)
     if account is not None:
-        return account, ""
+        if account.payouts_enabled:
+            return account, ""
+        return account, get_payment_provider().onboarding_link(account.provider_account_ref)
     account_ref, onboarding_url = get_payment_provider().create_payout_account(user.email)
     account = PayoutAccount(user_id=user.id, provider_account_ref=account_ref)
     db.add(account)

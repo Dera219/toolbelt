@@ -35,17 +35,25 @@ class StripePaymentProvider:
             raise ProviderError(str(exc)) from exc
         return customer.id
 
-    def attach_payment_method(self, customer_ref: str, payment_method_ref: str) -> None:
+    def attach_payment_method(self, customer_ref: str, payment_method_ref: str) -> str:
+        """Attach and return the resulting PaymentMethod id.
+
+        Test shorthands like "pm_card_visa" are aliases: each use resolves to a
+        brand-new PaymentMethod. Re-sending the alias to customers.update would
+        mint a second, unattached one and fail — so everything downstream must
+        use the id attach() actually returned.
+        """
         try:
-            self._client.payment_methods.attach(
+            attached = self._client.payment_methods.attach(
                 payment_method_ref, params={"customer": customer_ref}
             )
             self._client.customers.update(
                 customer_ref,
-                params={"invoice_settings": {"default_payment_method": payment_method_ref}},
+                params={"invoice_settings": {"default_payment_method": attached.id}},
             )
         except stripe.StripeError as exc:
             raise ProviderError(str(exc)) from exc
+        return attached.id
 
     def create_payout_account(self, email: str) -> tuple[str, str]:
         """Create a connected account for a worker and return (id, onboarding_url).
@@ -105,6 +113,46 @@ class StripePaymentProvider:
         except stripe.StripeError as exc:
             raise ProviderError(str(exc)) from exc
         return account.id, link.url
+
+    def payouts_enabled(self, account_ref: str) -> bool:
+        """Ask Stripe whether transfers are live on this account.
+
+        Polled rather than inferred from webhooks: onboarding completes in
+        Stripe's hosted flow, and a laptop cannot receive the resulting
+        account.updated callback without a tunnel. The webhook still works in
+        production; this keeps the read path truthful everywhere.
+        """
+        try:
+            account = self._client.v2.core.accounts.retrieve(
+                account_ref, params={"include": ["configuration.recipient"]}
+            )
+        except stripe.StripeError as exc:
+            raise ProviderError(str(exc)) from exc
+        recipient = getattr(account.configuration, "recipient", None)
+        if recipient is None:
+            return False
+        transfers = recipient.capabilities.stripe_balance.stripe_transfers
+        return getattr(transfers, "status", None) == "active"
+
+    def onboarding_link(self, account_ref: str) -> str:
+        settings = get_settings()
+        try:
+            link = self._client.v2.core.account_links.create(
+                params={
+                    "account": account_ref,
+                    "use_case": {
+                        "type": "account_onboarding",
+                        "account_onboarding": {
+                            "configurations": ["recipient"],
+                            "refresh_url": f"{settings.public_base_url}/onboarding/refresh",
+                            "return_url": f"{settings.public_base_url}/onboarding/done",
+                        },
+                    },
+                }
+            )
+        except stripe.StripeError as exc:
+            raise ProviderError(str(exc)) from exc
+        return link.url
 
     def authorize(
         self, amount_cents: int, currency: str, customer_ref: str, payment_method_ref: str,

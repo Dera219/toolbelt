@@ -16,9 +16,24 @@ class ProviderError(Exception):
 
 class PaymentProvider(Protocol):
     def create_customer(self, email: str) -> str: ...
-    def attach_payment_method(self, customer_ref: str, payment_method_ref: str) -> None: ...
+    def attach_payment_method(self, customer_ref: str, payment_method_ref: str) -> str:
+        """Attach a payment method and return its canonical id. Providers accept
+        shorthand test tokens that resolve to a *new* object on each use, so the
+        returned id — not the submitted one — is what must be stored."""
+        ...
     def create_payout_account(self, email: str) -> tuple[str, str]:
         """Returns (account_ref, onboarding_url)."""
+        ...
+
+    def payouts_enabled(self, account_ref: str) -> bool:
+        """Whether the connected account has finished onboarding and can receive
+        transfers. Polled on read so local development does not depend on
+        webhook delivery reaching a laptop."""
+        ...
+
+    def onboarding_link(self, account_ref: str) -> str:
+        """A fresh hosted-onboarding URL for an existing account. Provider links
+        expire and are single-use, so resuming always mints a new one."""
         ...
 
     def authorize(
@@ -44,6 +59,7 @@ class FakePaymentProvider:
         self.customers: list[str] = []
         self.attached: list[tuple[str, str]] = []
         self.accounts: list[str] = []
+        self.enabled_accounts: set[str] = set()
         self.authorizations: list[dict] = []
         self.captures: list[str] = []
         self.releases: list[str] = []
@@ -59,13 +75,22 @@ class FakePaymentProvider:
         self.customers.append(ref)
         return ref
 
-    def attach_payment_method(self, customer_ref: str, payment_method_ref: str) -> None:
+    def attach_payment_method(self, customer_ref: str, payment_method_ref: str) -> str:
         self.attached.append((customer_ref, payment_method_ref))
+        return payment_method_ref
 
     def create_payout_account(self, email: str) -> tuple[str, str]:
         ref = self._ref("acct")
         self.accounts.append(ref)
         return ref, f"https://onboarding.fake/{ref}"
+
+    def payouts_enabled(self, account_ref: str) -> bool:
+        # The fake provider only flips via the webhook path, which the tests
+        # drive explicitly; polling must not silently enable payouts.
+        return account_ref in self.enabled_accounts
+
+    def onboarding_link(self, account_ref: str) -> str:
+        return f"https://onboarding.fake/{account_ref}"
 
     def authorize(
         self, amount_cents: int, currency: str, customer_ref: str, payment_method_ref: str,

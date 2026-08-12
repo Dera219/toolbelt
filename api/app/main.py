@@ -69,10 +69,12 @@ async def provider_error_handler(_request: Request, exc: ProviderError):
     """A payment provider failure is an upstream fault, not a crash. Returning a
     real response also keeps CORS headers attached — without this the browser
     reports a bare 500 as an unreachable server."""
-    logging.getLogger(__name__).warning("payment provider error: %s", exc)
+    # Log the upstream detail; do not return it. Provider messages embed request
+    # ids and connected-account refs that clients have no business seeing.
+    logging.getLogger(__name__).warning("payment provider error: %s", exc, exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_502_BAD_GATEWAY,
-        content={"detail": f"Payment provider error: {exc}"},
+        content={"detail": "Payment provider is unavailable. Please try again."},
     )
 
 

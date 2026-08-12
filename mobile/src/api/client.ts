@@ -127,6 +127,13 @@ export const api = {
       password,
     }),
   logout: (refresh_token: string) => request<void>("POST", "/auth/logout", { refresh_token }),
+  authProviders: () => request<{ providers: string[] }>("GET", "/auth/providers"),
+  socialSignIn: (provider: string, id_token: string, role?: string) =>
+    request<{ access_token: string; refresh_token: string }>("POST", "/auth/social", {
+      provider,
+      id_token,
+      ...(role ? { role } : {}),
+    }),
   revokeAllSessions: () => request<{ revoked: number }>("POST", "/me/sessions/revoke-all"),
   me: () => request<User>("GET", "/me"),
   requestPhoneCode: (phone: string) =>

@@ -1,6 +1,7 @@
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { LinearGradient } from "expo-linear-gradient";
+import * as WebBrowser from "expo-web-browser";
 import React, { useCallback, useState } from "react";
 import { Text, View } from "react-native";
 import { ApiError, api, money } from "../api/client";
@@ -67,10 +68,30 @@ export default function AccountScreen() {
   const setUpPayouts = run(async () => {
     const account = await api.createPayoutAccount();
     setPayout(account);
+
+    if (account.payouts_enabled) {
+      setNotice("Payouts are active");
+      return;
+    }
+    if (!account.onboarding_url) {
+      setNotice("Payout account created — onboarding link unavailable, try again");
+      return;
+    }
+
+    // Stripe collects identity and bank details on its own hosted pages, so the
+    // only way to finish onboarding is to actually open the link. openAuthSession
+    // keeps the flow in an in-app browser and hands control back on dismiss.
+    await WebBrowser.openAuthSessionAsync(account.onboarding_url, "toolbelt://payouts");
+
+    // Stripe redirects to the server's https return_url, not the app scheme, so
+    // the result type tells us nothing useful. Re-read instead: the GET polls the
+    // provider, so a completed onboarding shows up here.
+    const refreshed = await api.getPayoutAccount();
+    setPayout(refreshed);
     setNotice(
-      account.payouts_enabled
+      refreshed.payouts_enabled
         ? "Payouts are active"
-        : "Payout account created — finish onboarding to get paid"
+        : "Onboarding not finished yet — reopen to continue"
     );
   });
 

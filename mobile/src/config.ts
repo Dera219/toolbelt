@@ -36,6 +36,17 @@ function resolveApiUrl(): string {
 
 export const API_URL = resolveApiUrl();
 
+/**
+ * OAuth client IDs, supplied at build time so no secrets live in the repo:
+ *   EXPO_PUBLIC_GOOGLE_CLIENT_ID=... npx expo start
+ * These are public identifiers, not secrets. The server independently verifies
+ * every token against the provider, so a wrong value here fails closed.
+ */
+export const SOCIAL_CLIENT_IDS = {
+  google: process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID ?? "",
+  microsoft: process.env.EXPO_PUBLIC_MICROSOFT_CLIENT_ID ?? "",
+} as const;
+
 export const TRADES = [
   "cleaning",
   "moving",

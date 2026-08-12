@@ -43,7 +43,19 @@ class PaymentProvider(Protocol):
     def capture(self, auth_ref: str) -> str: ...
     def release(self, auth_ref: str) -> None: ...
     def refund(self, charge_ref: str, amount_cents: int) -> str: ...
-    def transfer(self, account_ref: str, amount_cents: int, currency: str, metadata: dict) -> str: ...
+    def transfer(
+        self, account_ref: str, amount_cents: int, currency: str, metadata: dict,
+        idempotency_key: str,
+    ) -> str:
+        """Send funds to a connected account.
+
+        `idempotency_key` must be stable per logical payout. A transfer executes
+        at the provider before any local row is written, so a failure later in
+        the same transaction rolls back the database while the money has already
+        moved. Replaying the same key must return the original transfer rather
+        than sending a second one.
+        """
+        ...
 
 
 class FakePaymentProvider:
@@ -65,6 +77,8 @@ class FakePaymentProvider:
         self.releases: list[str] = []
         self.refunds: list[tuple[str, int]] = []
         self.transfers: list[dict] = []
+        self._transfer_keys: dict[str, str] = {}
+        self.fail_next_transfer = False
 
     def _ref(self, prefix: str) -> str:
         self._seq += 1
@@ -116,8 +130,16 @@ class FakePaymentProvider:
         self.refunds.append((charge_ref, amount_cents))
         return self._ref("re")
 
-    def transfer(self, account_ref: str, amount_cents: int, currency: str, metadata: dict) -> str:
+    def transfer(
+        self, account_ref: str, amount_cents: int, currency: str, metadata: dict,
+        idempotency_key: str,
+    ) -> str:
+        # Mirror the provider's idempotency so tests can prove a replay does not
+        # move money twice.
+        if idempotency_key in self._transfer_keys:
+            return self._transfer_keys[idempotency_key]
         ref = self._ref("tr")
+        self._transfer_keys[idempotency_key] = ref
         self.transfers.append(
             {"ref": ref, "account_ref": account_ref, "amount_cents": amount_cents, **metadata}
         )

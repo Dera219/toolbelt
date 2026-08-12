@@ -3,6 +3,7 @@ import { View } from "react-native";
 import { ApiError } from "../api/client";
 import type { Role } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import SocialButtons from "../auth/SocialButtons";
 import { space } from "../theme";
 import {
   Body,
@@ -89,6 +90,7 @@ export default function RegisterScreen() {
           />
           <ErrorText message={error} />
           <Button label="Create account" onPress={submit} loading={busy} disabled={!ready} />
+          <SocialButtons role={role} />
           <Caption>You can switch between hiring and working at any time.</Caption>
         </View>
       </FadeIn>

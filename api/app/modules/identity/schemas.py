@@ -41,6 +41,16 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
 
 
+class SocialSignInIn(BaseModel):
+    provider: str
+    id_token: str = Field(min_length=20, max_length=8000)
+    role: UserRole | None = None  # only applied when creating a new account
+
+
+class AuthOptionsOut(BaseModel):
+    providers: list[str]
+
+
 class RefreshIn(BaseModel):
     refresh_token: str = Field(min_length=10, max_length=200)
 

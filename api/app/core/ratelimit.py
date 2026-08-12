@@ -25,6 +25,10 @@ class RateLimitBackend(Protocol):
         """Count one request. Returns (allowed, seconds_until_reset)."""
         ...
 
+    def clear(self, key: str) -> None:
+        """Forget a counter — called when an attempt finally succeeds."""
+        ...
+
 
 class InMemoryRateLimiter:
     """Per-process counters. Correct for a single worker; tests reset it."""
@@ -42,6 +46,10 @@ class InMemoryRateLimiter:
             count += 1
             self._buckets[key] = (count, expires_at)
             return count <= limit, max(1, int(expires_at - now))
+
+    def clear(self, key: str) -> None:
+        with self._lock:
+            self._buckets.pop(key, None)
 
     def reset(self) -> None:
         with self._lock:
@@ -66,6 +74,9 @@ class RedisRateLimiter:
             self._redis.expire(key, window_seconds)
             ttl = window_seconds
         return count <= limit, max(1, int(ttl))
+
+    def clear(self, key: str) -> None:
+        self._redis.delete(key)
 
 
 _memory_limiter = InMemoryRateLimiter()
@@ -115,13 +126,33 @@ class RateLimit:
         # endpoint's own auth dependency still validates it.
         identity = auth[-32:] if auth.startswith("Bearer ") else _client_ip(request)
         key = f"rl:{self.scope}:{identity}"
+        request.state.rate_limit_key = key
         allowed, retry_after = get_rate_limiter().hit(key, self.limit, self.window_seconds)
         if not allowed:
             raise HTTPException(
                 status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests — slow down and try again shortly",
+                detail=(
+                    "Too many attempts. Try again in "
+                    f"{_humanize(retry_after)}."
+                ),
                 headers={"Retry-After": str(retry_after)},
             )
+
+
+def _humanize(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds} seconds"
+    minutes = round(seconds / 60)
+    return "1 minute" if minutes == 1 else f"{minutes} minutes"
+
+
+def clear_rate_limit(request: Request) -> None:
+    """Forget the counter for this request's limiter. Called after a success so
+    a person who mistypes a password four times and then gets it right is not
+    still carrying four strikes."""
+    key = getattr(request.state, "rate_limit_key", None)
+    if key:
+        get_rate_limiter().clear(key)
 
 
 def rate_limit(scope: str, limit: int, window_seconds: int):

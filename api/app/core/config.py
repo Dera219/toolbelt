@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     trust_proxy_headers: bool = False
     # Sessions
     refresh_token_expire_days: int = 30
+    # Social sign-in. Comma-separated client IDs (audiences) per provider; a
+    # provider with none configured is hidden from the app and refuses tokens.
+    # Native and web builds have different client IDs, hence the list.
+    google_client_ids: str = ""
+    apple_client_ids: str = ""
+    microsoft_client_ids: str = ""
     # Public origin, used to build URLs a third party redirects back to
     # (currently Stripe Connect onboarding return/refresh).
     public_base_url: str = "http://localhost:8000"

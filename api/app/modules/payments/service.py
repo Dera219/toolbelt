@@ -2,6 +2,8 @@
 completion, release on cancellation, refunds via admin. Every money movement after
 capture is recorded in the double-entry ledger."""
 
+import logging
+
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +19,8 @@ from app.modules.payments.models import (
     PayoutAccount,
 )
 from app.modules.payments.provider import ProviderError, get_payment_provider
+
+logger = logging.getLogger(__name__)
 
 
 def _fee_cents(amount_cents: int) -> int:
@@ -48,9 +52,15 @@ def set_payment_method(db: Session, user: User, payment_method_ref: str) -> Bill
     return profile
 
 
-def sync_payout_account(db: Session, user: User) -> PayoutAccount | None:
-    """Refresh payouts_enabled from the provider, paying out anything that was
-    waiting on onboarding. Cheap enough to run whenever the account is read."""
+def sync_payout_account(
+    db: Session, user: User, *, release_funds: bool = False
+) -> PayoutAccount | None:
+    """Refresh payouts_enabled from the provider.
+
+    Safe to call on a read: it only ever flips a boolean. Moving money is opt-in
+    via `release_funds`, because this runs from a GET that clients and proxies
+    retry freely — a read must never be the thing that triggers a payout.
+    """
     account = db.get(PayoutAccount, user.id)
     if account is None or account.payouts_enabled:
         return account
@@ -61,7 +71,13 @@ def sync_payout_account(db: Session, user: User) -> PayoutAccount | None:
     if enabled:
         account.payouts_enabled = True
         db.flush()
-        flush_pending_payouts(db, user.id)
+        if release_funds:
+            try:
+                flush_pending_payouts(db, user.id)
+            except ProviderError:
+                # Same contract as above: the account state is already correct,
+                # and the payout retries on the next flush.
+                logger.warning("deferred payout flush failed for user %s", user.id)
     return account
 
 
@@ -71,7 +87,7 @@ def create_payout_account(db: Session, user: User) -> tuple[PayoutAccount, str]:
     that exists but is not yet enabled still needs a new link every time."""
     if not user.can_work:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Workers only")
-    account = sync_payout_account(db, user)
+    account = sync_payout_account(db, user, release_funds=True)
     if account is not None:
         if account.payouts_enabled:
             return account, ""
@@ -159,11 +175,16 @@ def _try_payout(db: Session, payment: Payment) -> None:
     account = db.get(PayoutAccount, payment.worker_id)
     if account is None or not account.payouts_enabled:
         return  # funds stay on the worker's ledger balance until onboarding completes
+    # Keyed on the same identity as the ledger row below. The transfer happens
+    # before any local write, so if a later step in this transaction fails the
+    # database rolls back while the money has already moved; replaying the same
+    # key returns the original transfer instead of sending a second one.
     payment.provider_payout_ref = get_payment_provider().transfer(
         account.provider_account_ref,
         payment.worker_net_cents,
         payment.currency,
         metadata={"payment_id": str(payment.id)},
+        idempotency_key=f"payout:{payment.id}",
     )
     ledger.post_transaction(
         db,
@@ -187,7 +208,14 @@ def flush_pending_payouts(db: Session, worker_id: int) -> int:
     )
     count = 0
     for payment in payments:
-        _try_payout(db, payment)
+        try:
+            _try_payout(db, payment)
+        except ProviderError:
+            # One worker's failed transfer must not abort the others, and must
+            # not roll back payouts that already succeeded in this loop. The
+            # payment stays CAPTURED and is retried on the next flush.
+            logger.warning("payout failed for payment %s", payment.id, exc_info=True)
+            continue
         count += 1
     db.flush()
     return count

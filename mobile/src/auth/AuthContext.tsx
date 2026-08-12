@@ -9,6 +9,7 @@ import {
 import type { Role, User } from "../api/types";
 import { registerForPush, unregisterPush } from "../push";
 import { tokenStore } from "./storage";
+import { SocialCancelled, signInWithProvider, type SocialProvider } from "./social";
 
 export type Mode = "customer" | "worker";
 const TOKEN_KEY = "toolbelt_token";
@@ -22,6 +23,8 @@ interface AuthState {
   canWork: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, fullName: string, role: Role) => Promise<void>;
+  signInWithSocial: (provider: SocialProvider, role?: Role) => Promise<void>;
+  socialProviders: SocialProvider[];
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
   setMode: (mode: Mode) => void;
@@ -33,6 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [booting, setBooting] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [mode, setModeState] = useState<Mode>("customer");
+  const [socialProviders, setSocialProviders] = useState<SocialProvider[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -57,6 +61,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    // The server is the source of truth for which buttons to show; a provider
+    // without credentials configured would fail only after the user taps it.
+    api
+      .authProviders()
+      .then(({ providers }) => setSocialProviders(providers as SocialProvider[]))
+      .catch(() => setSocialProviders([]));
+  }, []);
+
+  const applyTokens = useCallback(
+    async (access: string, refresh: string) => {
+      setAuthToken(access);
+      setRefreshToken(refresh);
+      await tokenStore.set(TOKEN_KEY, access);
+      await tokenStore.set(REFRESH_KEY, refresh);
+      const me = await api.me();
+      setUser(me);
+      if (me.role === "worker") setModeState("worker");
+    },
+    []
+  );
+
+  const signInWithSocial = useCallback(
+    async (provider: SocialProvider, role?: Role) => {
+      let idToken: string;
+      try {
+        idToken = await signInWithProvider(provider);
+      } catch (e) {
+        // A cancelled sign-in is a normal outcome, not an error to shout about.
+        if (e instanceof SocialCancelled) return;
+        throw e;
+      }
+      const tokens = await api.socialSignIn(provider, idToken, role);
+      await applyTokens(tokens.access_token, tokens.refresh_token);
+    },
+    [applyTokens]
+  );
 
   const login = useCallback(async (email: string, password: string) => {
     const { access_token, refresh_token } = await api.login(email, password);
@@ -83,9 +125,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // needs to be authenticated, and the next person to log in on this phone
     // must not inherit these notifications.
     await unregisterPush();
+    // Revoke the session server-side too; dropping the token locally would
+    // leave a valid refresh token alive for its full 30 days.
+    const refresh = await tokenStore.get(REFRESH_KEY);
+    if (refresh) await api.logout(refresh).catch(() => {});
     setAuthToken(null);
+    setRefreshToken(null);
     setUser(null);
     await tokenStore.remove(TOKEN_KEY);
+    await tokenStore.remove(REFRESH_KEY);
   }, []);
 
   const refreshMe = useCallback(async () => {
@@ -128,8 +176,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logout,
       refreshMe,
       setMode,
+      signInWithSocial,
+      socialProviders,
     }),
-    [booting, user, mode, canWork, login, register, logout, refreshMe, setMode]
+    [
+      booting,
+      user,
+      mode,
+      canWork,
+      login,
+      register,
+      logout,
+      refreshMe,
+      setMode,
+      signInWithSocial,
+      socialProviders,
+    ]
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -6,6 +6,7 @@ import { ApiError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import type { RootStackParamList } from "../navigation";
 import { palette, space } from "../theme";
+import SocialButtons from "../auth/SocialButtons";
 import { Body, Button, ErrorText, FadeIn, Input, Row, Screen, space as gap } from "../ui";
 
 type Props = NativeStackScreenProps<RootStackParamList, "Login">;
@@ -103,6 +104,7 @@ export default function LoginScreen({ navigation }: Props) {
           />
           <ErrorText message={error} />
           <Button label="Log in" onPress={submit} loading={busy} />
+          <SocialButtons />
           <Button
             label="Create an account"
             variant="secondary"

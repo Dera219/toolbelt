@@ -128,11 +128,15 @@ class StripePaymentProvider:
             )
         except stripe.StripeError as exc:
             raise ProviderError(str(exc)) from exc
-        recipient = getattr(account.configuration, "recipient", None)
-        if recipient is None:
-            return False
-        transfers = recipient.capabilities.stripe_balance.stripe_transfers
-        return getattr(transfers, "status", None) == "active"
+        # Walk defensively: an account early in onboarding may omit any level of
+        # this chain, and an AttributeError here would escape the StripeError
+        # handler above and surface as a 500 instead of a clean provider error.
+        node = getattr(account, "configuration", None)
+        for attr in ("recipient", "capabilities", "stripe_balance", "stripe_transfers"):
+            node = getattr(node, attr, None)
+            if node is None:
+                return False
+        return getattr(node, "status", None) == "active"
 
     def onboarding_link(self, account_ref: str) -> str:
         settings = get_settings()
@@ -199,9 +203,19 @@ class StripePaymentProvider:
             raise ProviderError(str(exc)) from exc
         return refund.id
 
-    def transfer(self, account_ref: str, amount_cents: int, currency: str, metadata: dict) -> str:
+    def transfer(
+        self, account_ref: str, amount_cents: int, currency: str, metadata: dict,
+        idempotency_key: str,
+    ) -> str:
+        """Transfer to a connected account, keyed so a replay is a no-op.
+
+        Stripe returns the original transfer when the same idempotency key is
+        reused, which is what makes a retry after a rolled-back transaction safe
+        rather than a second payout.
+        """
         try:
             transfer = self._client.transfers.create(
+                options={"idempotency_key": idempotency_key},
                 params={
                     "amount": amount_cents,
                     "currency": currency.lower(),

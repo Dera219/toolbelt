@@ -1,23 +1,25 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.ratelimit import rate_limit
+from app.core.ratelimit import clear_rate_limit, rate_limit
 from app.core.security import (
     create_access_token,
     get_current_user,
     hash_password,
     verify_password,
 )
-from app.modules.identity import otp, sessions
+from app.modules.identity import oidc, otp, sessions, social
 from app.modules.identity.models import User, VettingStatus, WorkerProfile
 from app.modules.identity.schemas import (
+    AuthOptionsOut,
     LoginIn,
     RefreshIn,
+    SocialSignInIn,
     PhoneRequestIn,
     PhoneVerifyIn,
     RegisterIn,
@@ -67,7 +69,7 @@ def register(body: RegisterIn, db: DbDep):
     response_model=TokenOut,
     dependencies=[rate_limit("login", 10, 300)],
 )
-def login(body: LoginIn, db: DbDep):
+def login(body: LoginIn, db: DbDep, request: Request):
     user = db.scalar(select(User).where(User.email == body.email.lower()))
     # Verify against a constant dummy hash on miss so response timing does not
     # reveal whether the email exists.
@@ -76,6 +78,7 @@ def login(body: LoginIn, db: DbDep):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     if not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    clear_rate_limit(request)  # a correct password wipes the failed-attempt slate
     return TokenOut(
         access_token=create_access_token(user.id),
         refresh_token=sessions.issue(db, user),
@@ -83,6 +86,34 @@ def login(body: LoginIn, db: DbDep):
 
 
 _DUMMY_HASH = hash_password("timing-equalizer-dummy")
+
+
+@router.get("/auth/providers", response_model=AuthOptionsOut)
+def auth_providers():
+    """Which social buttons the app should show. Unconfigured providers are
+    hidden rather than failing when tapped."""
+    return AuthOptionsOut(providers=oidc.enabled_providers())
+
+
+@router.post(
+    "/auth/social",
+    response_model=TokenOut,
+    dependencies=[rate_limit("social_login", 20, 300)],
+)
+def social_sign_in(body: SocialSignInIn, db: DbDep):
+    try:
+        provider = oidc.Provider(body.provider)
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown provider. Supported: {[p.value for p in oidc.Provider]}",
+        )
+    identity = oidc.verify_id_token(provider, body.id_token)
+    user = social.sign_in(db, identity, role=body.role)
+    return TokenOut(
+        access_token=create_access_token(user.id),
+        refresh_token=sessions.issue(db, user),
+    )
 
 
 @router.post(

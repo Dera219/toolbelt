@@ -25,7 +25,10 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION"]
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -43,7 +46,8 @@
         {
           "locationAlwaysAndWhenInUsePermission": "ToolBelt uses your location to show jobs near you and to set your service area."
         }
-      ]
+      ],
+      "expo-web-browser"
     ]
   }
 }

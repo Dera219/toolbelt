@@ -140,6 +140,15 @@ def _transition_endpoint(
     }[allowed_actor]
     if not permitted:
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not a party to this job")
+    if job.status == JobStatus.DISPUTED:
+        # A dispute freezes the job for both parties. The state machine's edges
+        # out of DISPUTED exist solely for trust.service.resolve_dispute; letting
+        # a party use them would capture the card and pay out mid-dispute (or
+        # cancel out of a captured one), leaving the dispute unresolvable.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Job is under dispute and is frozen until it is resolved",
+        )
     try:
         state.transition(db, job, to_status, actor_id=actor.id)
     except state.InvalidTransition as exc:

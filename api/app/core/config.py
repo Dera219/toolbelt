@@ -4,6 +4,7 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_SECRET = "dev-only-secret-change-me"
+_DEV_WEBHOOK_SECRET = "dev-webhook-secret-0123456789abcdef"
 
 
 class Settings(BaseSettings):
@@ -44,7 +45,7 @@ class Settings(BaseSettings):
     platform_fee_bps: int = 1500  # 15% take-rate on completed jobs
     # Internal HMAC secret for POST /webhooks/payments — the fake-provider
     # event shape the test suite drives. NOT a Stripe value.
-    payments_webhook_secret: str = "dev-webhook-secret-0123456789abcdef"
+    payments_webhook_secret: str = _DEV_WEBHOOK_SECRET
     # Signing secret (whsec_…) for POST /webhooks/stripe. Unset disables the
     # route (it answers 503); payout state then relies on polling alone, which
     # is correct but slower.
@@ -62,6 +63,21 @@ class Settings(BaseSettings):
             raise ValueError(
                 "TOOLBELT_JWT_SECRET must be set to a random value of at least "
                 "32 bytes in prod (e.g. `openssl rand -hex 32`)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _prod_requires_webhook_secret(self) -> "Settings":
+        # /webhooks/payments can enable payout accounts and flush transfers, so
+        # the committed default would let anyone who has read the source sign a
+        # valid event. Refuse to start rather than run with a public secret.
+        if self.environment == "prod" and (
+            self.payments_webhook_secret == _DEV_WEBHOOK_SECRET
+            or len(self.payments_webhook_secret.encode()) < 32
+        ):
+            raise ValueError(
+                "TOOLBELT_PAYMENTS_WEBHOOK_SECRET must be set to a random value of "
+                "at least 32 bytes in prod (e.g. `openssl rand -hex 32`)"
             )
         return self
 

@@ -117,6 +117,77 @@ def test_replayed_transfer_does_not_pay_twice(client):
     assert len(_fake_provider.transfers) == 1, "replay must not create a second transfer"
 
 
+def test_concurrent_flush_ledger_collision_is_benign(client, monkeypatch):
+    """The onboarding webhook and /me/payout-account can flush the same payment
+    concurrently. Both pass the ledger's exists-check before either commits, and
+    the loser's insert trips uq_ledger_txn_account. Stripe idempotency already
+    made the money safe, so the loser must treat the collision as "already
+    recorded" instead of 500ing at commit.
+
+    Simulated from the loser's point of view: the winner's rows are committed
+    (by a second session) and the exists-check is skipped, exactly as when the
+    check ran before the winner's commit landed.
+    """
+    from sqlalchemy import select
+
+    from app.core.db import SessionLocal
+    from app.modules.payments import ledger as ledger_module
+    from app.modules.payments.models import LedgerEntry, Payment, PaymentStatus
+
+    _job, _customer, worker = _completed_job(client)
+    account = _create_payout_account(client, worker)
+    _fake_provider.enabled_accounts.add(account["provider_account_ref"])
+
+    # The winner's committed ledger rows, exactly what _try_payout would write.
+    with SessionLocal() as db:
+        payment = db.scalar(select(Payment))
+        payment_id, net, currency, worker_id = (
+            payment.id, payment.worker_net_cents, payment.currency, payment.worker_id,
+        )
+        db.add_all(
+            [
+                LedgerEntry(
+                    txn_key=f"payout:{payment_id}", account=f"worker:{worker_id}",
+                    amount_cents=-net, currency=currency, payment_id=payment_id,
+                ),
+                LedgerEntry(
+                    txn_key=f"payout:{payment_id}", account="external:payouts",
+                    amount_cents=net, currency=currency, payment_id=payment_id,
+                ),
+            ]
+        )
+        db.commit()
+
+    def post_without_exists_check(db, txn_key, currency, entries, payment_id=None):
+        # The loser's exists-check ran before the winner committed, so it saw
+        # nothing — this reproduces the insert it then attempts.
+        for account_name, amount in entries:
+            db.add(
+                LedgerEntry(
+                    txn_key=txn_key, account=account_name, amount_cents=amount,
+                    currency=currency, payment_id=payment_id,
+                )
+            )
+        db.flush()
+        return True
+
+    monkeypatch.setattr(ledger_module, "post_transaction", post_without_exists_check)
+
+    resp = client.post("/me/payout-account", headers=worker)
+    assert resp.status_code == 200, "the losing flush must not surface an error"
+    assert resp.json()["payouts_enabled"] is True
+
+    with SessionLocal() as db:
+        payment = db.scalar(select(Payment))
+        assert payment.status == PaymentStatus.PAID_OUT
+        assert payment.provider_payout_ref is not None
+        rows = db.scalars(
+            select(LedgerEntry).where(LedgerEntry.txn_key == f"payout:{payment_id}")
+        ).all()
+        assert len(rows) == 2, "the winner's rows stand alone — no duplicates"
+    assert client.get("/me/balance", headers=worker).json()["balance_cents"] == 0
+
+
 def test_one_failed_payout_does_not_block_the_others(client, monkeypatch):
     """A provider failure on one payment must not abort the whole flush."""
     _job, _customer, worker = _completed_job(client)

@@ -357,3 +357,22 @@ class StripePaymentProvider:
         except stripe.StripeError as exc:
             raise _provider_error(exc) from exc
         return transfer.id
+
+    def reverse_transfer(
+        self, transfer_ref: str, amount_cents: int, idempotency_key: str,
+    ) -> str:
+        """Reverse (part of) a transfer, keyed so a replay is a no-op.
+
+        Stripe pulls the amount back from the connected account's balance into
+        the platform's; reusing the idempotency key returns the original
+        reversal rather than collecting from the worker twice.
+        """
+        try:
+            reversal = self._client.transfers.reversals.create(
+                transfer_ref,
+                options={"idempotency_key": idempotency_key},
+                params={"amount": amount_cents},
+            )
+        except stripe.StripeError as exc:
+            raise _provider_error(exc) from exc
+        return reversal.id

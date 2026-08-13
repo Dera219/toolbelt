@@ -108,7 +108,8 @@ def notify_job_posted(db: Session, job: Job) -> None:
         select(User)
         .join(WorkerProfile, WorkerProfile.user_id == User.id)
         .where(
-            User.role == UserRole.WORKER,
+            # Anyone who can work (User.can_work): dual-role users take jobs too.
+            User.role.in_((UserRole.WORKER, UserRole.BOTH)),
             User.status == UserStatus.ACTIVE,
             User.id != job.customer_id,
             WorkerProfile.trade == job.trade,

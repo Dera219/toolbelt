@@ -20,6 +20,8 @@ _ALLOWED: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.COMPLETED: frozenset({JobStatus.DISPUTED}),
     JobStatus.CANCELLED: frozenset(),
     # Resolution restores whichever status the job held before the dispute.
+    # These edges are for trust.service.resolve_dispute only — the party-facing
+    # endpoints refuse to touch a disputed job (jobs.service._transition_endpoint).
     JobStatus.DISPUTED: frozenset(
         {
             JobStatus.ASSIGNED,

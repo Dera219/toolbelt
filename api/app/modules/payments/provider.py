@@ -90,6 +90,18 @@ class PaymentProvider(Protocol):
         """
         ...
 
+    def reverse_transfer(
+        self, transfer_ref: str, amount_cents: int, idempotency_key: str,
+    ) -> str:
+        """Claw back part or all of a transfer from a connected account.
+
+        Used when a refund lands on a payment whose worker share has already
+        been paid out. Same idempotency contract as `transfer`: the reversal
+        executes at the provider before any local row is written, so replaying
+        the same key must return the original reversal, never collect twice.
+        """
+        ...
+
 
 class FakePaymentProvider:
     """In-process provider for dev and tests. Records every call; supports failure
@@ -115,6 +127,8 @@ class FakePaymentProvider:
         self.transfers: list[dict] = []
         self._transfer_keys: dict[str, str] = {}
         self.fail_next_transfer = False
+        self.transfer_reversals: list[dict] = []
+        self._reversal_keys: dict[str, str] = {}
 
     def _ref(self, prefix: str) -> str:
         self._seq += 1
@@ -203,6 +217,20 @@ class FakePaymentProvider:
         self._transfer_keys[idempotency_key] = ref
         self.transfers.append(
             {"ref": ref, "account_ref": account_ref, "amount_cents": amount_cents, **metadata}
+        )
+        return ref
+
+    def reverse_transfer(
+        self, transfer_ref: str, amount_cents: int, idempotency_key: str,
+    ) -> str:
+        # Same replay contract as transfer: a reused key returns the original
+        # reversal instead of collecting from the worker a second time.
+        if idempotency_key in self._reversal_keys:
+            return self._reversal_keys[idempotency_key]
+        ref = self._ref("trr")
+        self._reversal_keys[idempotency_key] = ref
+        self.transfer_reversals.append(
+            {"ref": ref, "transfer_ref": transfer_ref, "amount_cents": amount_cents}
         )
         return ref
 

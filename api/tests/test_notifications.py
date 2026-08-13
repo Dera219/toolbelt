@@ -14,6 +14,7 @@ from tests.conftest import (
     make_worker,
     post_job,
     register,
+    set_vetting_status,
 )
 
 
@@ -108,6 +109,34 @@ def test_job_posted_skips_worker_outside_their_service_radius(client, clean_db):
     post_job(client, cust, trade="cleaning", **UMD)
 
     assert "ExpoPushToken[far]" not in _tokens_notified()
+
+
+def test_job_posted_notifies_dual_role_worker(client, clean_db):
+    """role='both' users can work (User.can_work), so they must hear about jobs
+    exactly like role='worker' — skipping them silently starves dual-role
+    accounts of the marketplace's core signal."""
+    register(client, "dual@example.com", role="both")
+    dual = login(client, "dual@example.com")
+    resp = client.put(
+        "/me/worker-profile",
+        json={
+            "trade": "cleaning",
+            "hourly_rate_cents": 4500,
+            "base_lat": UMD["lat"],
+            "base_lng": UMD["lng"],
+            "service_radius_km": 30,
+        },
+        headers=dual,
+    )
+    assert resp.status_code == 200, resp.text
+    set_vetting_status("dual@example.com", "verified")
+    _register_device(client, dual, "ExpoPushToken[dual]")
+
+    _dev_sender.reset()
+    cust = customer_with_pm(client, "c8@example.com")
+    post_job(client, cust, trade="cleaning", **UMD)
+
+    assert "ExpoPushToken[dual]" in _tokens_notified()
 
 
 def test_job_posted_skips_unvetted_worker(client, clean_db):

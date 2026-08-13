@@ -6,6 +6,7 @@ import logging
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -263,7 +264,7 @@ def _try_payout(db: Session, payment: Payment) -> None:
     # database rolls back while the money has already moved; replaying the same
     # key returns the original transfer instead of sending a second one.
     try:
-        payment.provider_payout_ref = get_payment_provider().transfer(
+        payout_ref = get_payment_provider().transfer(
             account.provider_account_ref,
             payment.worker_net_cents,
             payment.currency,
@@ -292,16 +293,29 @@ def _try_payout(db: Session, payment: Payment) -> None:
             payment.id, payment.payout_attempts, exc,
         )
         return
-    ledger.post_transaction(
-        db,
-        txn_key=f"payout:{payment.id}",
-        currency=payment.currency,
-        entries=[
-            (f"worker:{payment.worker_id}", -payment.worker_net_cents),
-            ("external:payouts", payment.worker_net_cents),
-        ],
-        payment_id=payment.id,
-    )
+    try:
+        # Concurrent flushes (the onboarding webhook racing GET/POST
+        # /me/payout-account) can both pass the ledger's exists-check before
+        # either commits; the loser then trips uq_ledger_txn_account. The
+        # transfer above was already deduplicated by its idempotency key, so
+        # the collision only means the rows are recorded — roll back this
+        # savepoint and carry on as the no-op it is.
+        with db.begin_nested():
+            ledger.post_transaction(
+                db,
+                txn_key=f"payout:{payment.id}",
+                currency=payment.currency,
+                entries=[
+                    (f"worker:{payment.worker_id}", -payment.worker_net_cents),
+                    ("external:payouts", payment.worker_net_cents),
+                ],
+                payment_id=payment.id,
+            )
+    except IntegrityError:
+        logger.info(
+            "payout ledger for payment %s already recorded by a concurrent flush", payment.id
+        )
+    payment.provider_payout_ref = payout_ref
     payment.status = PaymentStatus.PAID_OUT
 
 
@@ -343,10 +357,23 @@ def refund_payment(db: Session, payment_id: int, amount_cents: int | None) -> Pa
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Refund must be between 1 and {remaining} cents",
         )
-    get_payment_provider().refund(payment.provider_charge_ref, amount)
     # Worker and platform give back proportional shares; rounding lands on platform.
     worker_share = amount * payment.worker_net_cents // payment.amount_cents
     platform_share = amount - worker_share
+    reverse_payout = payment.status == PaymentStatus.PAID_OUT and worker_share > 0
+    if reverse_payout:
+        # The worker's share already left for their connected account, so claw
+        # it back before refunding the customer — otherwise the worker's ledger
+        # goes negative and the platform eats the loss. Runs first: a failed
+        # reversal must abort the whole refund with nothing moved. Keyed on the
+        # same cumulative amount as the ledger rows below, so a retry after a
+        # rollback replays the original reversal instead of collecting twice.
+        get_payment_provider().reverse_transfer(
+            payment.provider_payout_ref,
+            worker_share,
+            idempotency_key=f"reverse:{payment.id}:{payment.refunded_cents + amount}",
+        )
+    get_payment_provider().refund(payment.provider_charge_ref, amount)
     entries = [("external:card_network", amount), (f"worker:{payment.worker_id}", -worker_share)]
     if platform_share:
         entries.append(("platform:revenue", -platform_share))
@@ -357,6 +384,20 @@ def refund_payment(db: Session, payment_id: int, amount_cents: int | None) -> Pa
         entries=entries,
         payment_id=payment.id,
     )
+    if reverse_payout:
+        # The refund entries above drove the worker's balance negative by their
+        # share; the reversal brings that money back off the payout rail and
+        # squares them, keeping every account at zero net.
+        ledger.post_transaction(
+            db,
+            txn_key=f"reverse:{payment.id}:{payment.refunded_cents + amount}",
+            currency=payment.currency,
+            entries=[
+                ("external:payouts", -worker_share),
+                (f"worker:{payment.worker_id}", worker_share),
+            ],
+            payment_id=payment.id,
+        )
     payment.refunded_cents += amount
     if payment.refunded_cents == payment.amount_cents:
         payment.status = PaymentStatus.REFUNDED

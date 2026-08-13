@@ -38,6 +38,11 @@ def test_open_dispute_freezes_job(client):
     # Both parties can read it.
     assert client.get(f"/jobs/{job['id']}/dispute", headers=worker).json()["id"] == dispute["id"]
 
+    # Frozen means frozen: neither party can move the job while it is disputed.
+    assert client.post(f"/jobs/{job['id']}/complete", headers=worker).status_code == 409
+    assert client.post(f"/jobs/{job['id']}/cancel", headers=customer).status_code == 409
+    assert client.get(f"/jobs/{job['id']}", headers=customer).json()["status"] == "disputed"
+
 
 def test_full_refund_resolution_restores_status_and_moves_money(client):
     job, customer, worker = _completed_job(client)
@@ -193,6 +198,62 @@ def test_dispute_window_closes(client):
     resp = client.post(f"/jobs/{job['id']}/dispute", json={"reason": "quality"}, headers=customer)
     assert resp.status_code == 409
     assert "window" in resp.json()["detail"].lower()
+
+
+def test_disputed_job_cannot_be_completed_or_cancelled_mid_work(client):
+    """A worker completing a disputed job would capture the card and pay out
+    mid-dispute — after which the admin restore to in_progress is an illegal
+    transition and the dispute can never be resolved. A customer cancelling
+    would likewise walk out of a contested authorization. Both must be frozen."""
+    customer = customer_with_pm(client, "customer@example.com")
+    worker = make_worker(client, "worker@example.com")
+    job = post_job(client, customer)
+    offer = client.post(
+        f"/jobs/{job['id']}/offers", json={"price_cents": 10000}, headers=worker
+    ).json()
+    client.post(f"/offers/{offer['id']}/accept", headers=customer)
+    client.post(f"/jobs/{job['id']}/start", headers=worker)
+    client.post(f"/jobs/{job['id']}/dispute", json={"reason": "unsafe"}, headers=customer)
+
+    resp = client.post(f"/jobs/{job['id']}/complete", headers=worker)
+    assert resp.status_code == 409
+    assert "dispute" in resp.json()["detail"].lower()
+    assert client.post(f"/jobs/{job['id']}/cancel", headers=customer).status_code == 409
+
+    # Nothing was captured or released — the hold is exactly as it was.
+    payment = client.get(f"/jobs/{job['id']}/payment", headers=customer).json()
+    assert payment["status"] == "authorized"
+
+    # And the admin path still restores the pre-dispute status.
+    admin = make_admin(client)
+    dispute_id = client.get("/admin/disputes", headers=admin).json()[0]["id"]
+    resolved = client.post(
+        f"/admin/disputes/{dispute_id}/resolve", json={"outcome": "dismissed"}, headers=admin
+    )
+    assert resolved.status_code == 200, resolved.text
+    assert client.get(f"/jobs/{job['id']}", headers=customer).json()["status"] == "in_progress"
+
+
+def test_disputed_job_cannot_be_started(client):
+    """A dispute opened at `assigned` (a no-show) freezes the start edge too."""
+    customer = customer_with_pm(client, "customer@example.com")
+    worker = make_worker(client, "worker@example.com")
+    job = post_job(client, customer)
+    offer = client.post(
+        f"/jobs/{job['id']}/offers", json={"price_cents": 10000}, headers=worker
+    ).json()
+    client.post(f"/offers/{offer['id']}/accept", headers=customer)
+    client.post(f"/jobs/{job['id']}/dispute", json={"reason": "no_show"}, headers=customer)
+
+    assert client.post(f"/jobs/{job['id']}/start", headers=worker).status_code == 409
+    assert client.post(f"/jobs/{job['id']}/cancel", headers=customer).status_code == 409
+
+    admin = make_admin(client)
+    dispute_id = client.get("/admin/disputes", headers=admin).json()[0]["id"]
+    client.post(
+        f"/admin/disputes/{dispute_id}/resolve", json={"outcome": "dismissed"}, headers=admin
+    )
+    assert client.get(f"/jobs/{job['id']}", headers=customer).json()["status"] == "assigned"
 
 
 def test_dispute_during_work_restores_in_progress(client):

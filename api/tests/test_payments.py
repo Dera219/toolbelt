@@ -167,6 +167,95 @@ def test_partial_then_full_refund(client):
     )
     assert over.status_code == 409  # fully refunded payments are closed
 
+    # Nothing was paid out, so there was nothing to reverse.
+    assert _fake_provider.transfer_reversals == []
+
+    assert client.get("/admin/ledger/trial-balance", headers=admin).json()["balanced"] is True
+
+
+def _paid_out_job(client, price_cents=10000):
+    """Onboard the worker first so completion captures and pays out immediately."""
+    customer = customer_with_pm(client, "customer@example.com")
+    worker = make_worker(client, "worker@example.com")
+    account = client.post("/me/payout-account", headers=worker).json()
+    _enable_payouts(client, account["provider_account_ref"])
+    job = post_job(client, customer)
+    offer = client.post(
+        f"/jobs/{job['id']}/offers", json={"price_cents": price_cents}, headers=worker
+    ).json()
+    client.post(f"/offers/{offer['id']}/accept", headers=customer)
+    client.post(f"/jobs/{job['id']}/start", headers=worker)
+    client.post(f"/jobs/{job['id']}/complete", headers=worker)
+    return job, customer, worker
+
+
+def test_full_refund_after_payout_reverses_the_transfer(client):
+    """Refunding a paid-out payment must claw the worker's share back from their
+    connected account — otherwise their ledger goes negative and the platform
+    eats the loss."""
+    job, customer, worker = _paid_out_job(client)
+    assert client.get(f"/jobs/{job['id']}/payment", headers=worker).json()["status"] == "paid_out"
+
+    admin = make_admin(client)
+    payment_id = client.get(f"/jobs/{job['id']}/payment", headers=customer).json()["id"]
+    refunded = client.post(f"/admin/payments/{payment_id}/refund", json={}, headers=admin).json()
+    assert refunded["status"] == "refunded"
+    assert refunded["refunded_cents"] == 10000
+
+    # The worker's whole net came back off the payout rail.
+    assert len(_fake_provider.transfer_reversals) == 1
+    reversal = _fake_provider.transfer_reversals[0]
+    assert reversal["amount_cents"] == 8500
+    assert reversal["transfer_ref"] == _fake_provider.transfers[-1]["ref"]
+
+    # Worker made whole, every account square.
+    assert client.get("/me/balance", headers=worker).json()["balance_cents"] == 0
+    assert client.get("/admin/ledger/trial-balance", headers=admin).json()["balanced"] is True
+
+
+def test_partial_refunds_after_payout_reverse_proportionally(client):
+    job, customer, worker = _paid_out_job(client)
+    admin = make_admin(client)
+    payment_id = client.get(f"/jobs/{job['id']}/payment", headers=customer).json()["id"]
+
+    partial = client.post(
+        f"/admin/payments/{payment_id}/refund", json={"amount_cents": 4000}, headers=admin
+    ).json()
+    assert partial["status"] == "paid_out"
+    assert partial["refunded_cents"] == 4000
+    # Worker's 85% share of the partial refund comes back: 4000 * 0.85.
+    assert _fake_provider.transfer_reversals[-1]["amount_cents"] == 3400
+    assert client.get("/me/balance", headers=worker).json()["balance_cents"] == 0
+
+    rest = client.post(f"/admin/payments/{payment_id}/refund", json={}, headers=admin).json()
+    assert rest["status"] == "refunded"
+    assert _fake_provider.transfer_reversals[-1]["amount_cents"] == 5100
+    assert sum(r["amount_cents"] for r in _fake_provider.transfer_reversals) == 8500
+
+    assert client.get("/me/balance", headers=worker).json()["balance_cents"] == 0
+    assert client.get("/admin/ledger/trial-balance", headers=admin).json()["balanced"] is True
+
+
+def test_failed_reversal_aborts_the_refund(client, monkeypatch):
+    """No partial state: if the claw-back fails, the customer is not refunded
+    and the payment is untouched, ready for a clean retry."""
+    from app.modules.payments.provider import ProviderError
+
+    job, customer, worker = _paid_out_job(client)
+    admin = make_admin(client)
+    payment_id = client.get(f"/jobs/{job['id']}/payment", headers=customer).json()["id"]
+
+    def refuse(*args, **kwargs):
+        raise ProviderError("insufficient balance on connected account")
+
+    monkeypatch.setattr(_fake_provider, "reverse_transfer", refuse)
+    resp = client.post(f"/admin/payments/{payment_id}/refund", json={}, headers=admin)
+    assert resp.status_code == 502, resp.text
+
+    payment = client.get(f"/jobs/{job['id']}/payment", headers=customer).json()
+    assert payment["status"] == "paid_out"
+    assert payment["refunded_cents"] == 0
+    assert _fake_provider.refunds == [], "the customer refund must not have run"
     assert client.get("/admin/ledger/trial-balance", headers=admin).json()["balanced"] is True
 
 

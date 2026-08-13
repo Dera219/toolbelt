@@ -22,6 +22,7 @@ without an active transfers capability. Supply one with:
 from __future__ import annotations
 
 import os
+import uuid
 
 import pytest
 
@@ -312,12 +313,49 @@ def test_create_payout_account_returns_account_and_onboarding_url(provider):
     ),
 )
 def test_transfer_to_connected_account(provider):
-    ref = provider.transfer(CONNECTED_ACCOUNT, 85, "usd", {"payment_id": "itest-transfer"})
+    ref = provider.transfer(
+        CONNECTED_ACCOUNT, 85, "usd", {"payment_id": "itest-transfer"},
+        idempotency_key=f"itest-transfer-{uuid.uuid4()}",
+    )
     assert ref.startswith("tr_")
 
     transfer = provider._client.transfers.retrieve(ref)
     assert transfer.amount == 85
     assert transfer.destination == CONNECTED_ACCOUNT
+
+
+@pytest.mark.skipif(
+    not CONNECTED_ACCOUNT,
+    reason=(
+        "TOOLBELT_STRIPE_TEST_ACCOUNT not set — needs a connected account that has "
+        "completed Express onboarding, which cannot be automated from a test"
+    ),
+)
+def test_reverse_transfer_claws_back_and_replays_idempotently(provider):
+    """Refunds after payout claw the worker share back via a transfer reversal.
+
+    The domain suite proves the flow against FakePaymentProvider; this is the
+    one test that proves Stripe's side: a partial reversal lands with the right
+    amount, and replaying the same idempotency key returns the original
+    reversal instead of collecting from the worker twice.
+    """
+    transfer_ref = provider.transfer(
+        CONNECTED_ACCOUNT, 85, "usd", {"payment_id": "itest-reversal"},
+        idempotency_key=f"itest-reversal-setup-{uuid.uuid4()}",
+    )
+    key = f"itest-reverse-{uuid.uuid4()}"
+
+    reversal_ref = provider.reverse_transfer(transfer_ref, 40, idempotency_key=key)
+    assert reversal_ref.startswith("trr_")
+
+    transfer = provider._client.transfers.retrieve(transfer_ref)
+    assert transfer.amount_reversed == 40
+    assert transfer.reversed is False  # partial, not full
+
+    replay_ref = provider.reverse_transfer(transfer_ref, 40, idempotency_key=key)
+    assert replay_ref == reversal_ref, "same key must return the original reversal"
+    transfer = provider._client.transfers.retrieve(transfer_ref)
+    assert transfer.amount_reversed == 40, "replay must not reverse a second time"
 
 
 def test_capture_tolerates_an_already_captured_intent(provider, customer):

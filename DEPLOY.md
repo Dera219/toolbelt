@@ -27,16 +27,25 @@ Postgres together. No CLI, no Docker locally.
    | `TOOLBELT_PUBLIC_BASE_URL` | Leave blank now; set in step 6. |
 
 5. Deploy. First build takes a few minutes.
-6. Copy the service URL (`https://toolbelt-api.onrender.com`) into
+6. Copy the service URL **exactly as the Render dashboard shows it** into
    `TOOLBELT_PUBLIC_BASE_URL` and redeploy. **This is not optional** — startup
    fails in prod if it is still localhost, because Stripe Connect onboarding
    redirects to it and a worker sent to localhost lands nowhere.
 
-Verify:
+   Do not guess the URL from the service name: `.onrender.com` subdomains are
+   global, and `toolbelt-api.onrender.com` is already owned by an unrelated
+   app that also calls itself "ToolBelt API". Render gives a taken name a
+   suffix (`toolbelt-api-XXXX.onrender.com`).
+
+Verify — the response must say `"environment"`, not `"version"`:
 
 ```bash
-curl https://toolbelt-api.onrender.com/health
+curl https://<your-service>.onrender.com/health
 ```
+
+Expected: `{"status":"ok","environment":"prod"}`. A response like
+`{"status":"healthy","version":"0.1.0"}` means you are looking at the
+unrelated app on the unsuffixed subdomain, not this API.
 
 ### The free tier sleeps
 

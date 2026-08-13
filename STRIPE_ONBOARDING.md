@@ -201,3 +201,18 @@ the recipient capability-status event rather than the v1 endpoint, and parse the
 v2 payload shape (the current route reads `data.object.id`, which is v1-shaped).
 Until then, polling is not a workaround — it is the mechanism.
 
+## Custom domain
+
+`https://api.toolbelt.biz` serves the production API (set up 2026-08-13).
+
+- Render → Settings → Custom Domains → `api.toolbelt.biz`.
+- Cloudflare DNS: `CNAME api → toolbelt-api-nlh2.onrender.com`, **DNS only**.
+  The grey cloud is load-bearing: Cloudflare's orange-cloud proxy intercepts the
+  ACME challenge and Render can never issue a certificate.
+- Verified: certificate issued by Google Trust Services, `/health` returns
+  `{"status":"ok","environment":"prod"}` over HTTPS.
+
+The Stripe webhook and `TOOLBELT_PUBLIC_BASE_URL` both now use this host. The
+onrender.com subdomain still works and is worth keeping as a fallback — if the
+domain or its DNS ever breaks, the service is still reachable.
+

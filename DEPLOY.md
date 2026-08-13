@@ -92,13 +92,33 @@ fly deploy
 - **Non-root container user**, and the image is Python 3.12 rather than 3.14
   because several dependencies still ship no 3.14 wheels.
 
+## Current deployment
+
+The API runs at **https://api.toolbelt.biz** (Render service `toolbelt-api`,
+`srv-d9u9dgqjobas73elblp0`). The steps below describe a fresh setup; for this
+project they are already done.
+
+The custom domain is a Render custom domain plus a Cloudflare `CNAME api →
+toolbelt-api-nlh2.onrender.com` set to **DNS only**. The grey cloud is
+load-bearing: Cloudflare's proxy intercepts the certificate challenge, so an
+orange-clouded record leaves Render stuck at "Waiting for Verification"
+forever. The onrender.com host stays enabled as a fallback.
+
 ## After the API is up
 
-1. **Point the mobile app at it** — replace the placeholder hosts in
-   `mobile/eas.json` (`staging.example.com`, `api.example.com`).
+1. **Point the mobile app at it** — `mobile/eas.json` now uses
+   `https://api.toolbelt.biz` for both preview and production builds. There is
+   no separate staging deployment; pointing preview at a host that does not
+   exist means every internal build silently reaches nothing.
 2. **Register the Stripe webhook** — Stripe (test mode) → Developers →
    Webhooks → add `https://<your-host>/webhooks/stripe`, listening for
-   `account.updated`. Put the endpoint's signing secret (`whsec_…`) in
+   `account.updated`. *(Done: endpoint `we_1U3nGV4kwBzxDoaE7iyrcuv4` →
+   `https://api.toolbelt.biz/webhooks/stripe`, secret set on Render.)*
+
+   Worth knowing: worker accounts are created with **Accounts v2**, which does
+   not emit the v1 `account.updated` event, so this endpoint will most likely
+   never fire for onboarding. Payout state is kept correct by polling — that is
+   the mechanism, not a fallback. See STRIPE_ONBOARDING.md. Put the endpoint's signing secret (`whsec_…`) in
    `TOOLBELT_STRIPE_WEBHOOK_SECRET`. This is a latency optimization: the
    polling path (`service.sync_payout_account` → `flush_pending_payouts`)
    already flips `payouts_enabled` and releases held payouts, so a missed

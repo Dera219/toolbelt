@@ -172,3 +172,32 @@ anything else.
 Sandboxes are fully separate environments: customers, saved cards, connected
 accounts, and payments do **not** carry across. Switching sandboxes means
 re-adding test cards and re-running onboarding.
+
+## Webhook: registered, but probably inert for our accounts
+
+Endpoint `we_1U3nGV4kwBzxDoaE7iyrcuv4` →
+`https://toolbelt-api-nlh2.onrender.com/webhooks/stripe`, event
+`account.updated`, signing secret set as `TOOLBELT_STRIPE_WEBHOOK_SECRET` on
+Render. Verified live: a forged signature is rejected with 400 (before the
+secret existed the route answered 503, by design).
+
+**The caveat that matters.** Worker payout accounts are created with **Accounts
+v2**, and a v2 account update does *not* emit the classic v1 `account.updated`
+event. Evidence: updating a connected account produced no new event, and the
+only `account.updated` in the sandbox predates the endpoint and belongs to the
+platform account itself.
+
+So this endpoint is correctly configured and verified, and will most likely
+never fire for worker onboarding.
+
+**What actually keeps payout state correct today: polling.** `sync_payout_account`
+asks Stripe whether transfers are active whenever the payout account is read,
+and releases anything deferred on an explicit setup call. That path is proven
+end to end — a worker completed onboarding and the flag flipped without any
+webhook involvement.
+
+**Follow-up if the delay ever matters:** subscribe a v2 *event destination* to
+the recipient capability-status event rather than the v1 endpoint, and parse the
+v2 payload shape (the current route reads `data.object.id`, which is v1-shaped).
+Until then, polling is not a workaround — it is the mechanism.
+

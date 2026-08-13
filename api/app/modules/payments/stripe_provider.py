@@ -28,6 +28,18 @@ MOBILE_SDK_API_VERSION = "2024-06-20"
 from app.modules.payments.provider import ProviderError
 
 
+def _provider_error(exc: stripe.StripeError) -> ProviderError:
+    """Classify a Stripe failure.
+
+    An InvalidRequestError or CardError means Stripe evaluated the request and
+    refused it — nothing moved, so a retry under a fresh idempotency key is
+    safe. A connection or generic API error leaves the outcome unknown, and the
+    retry must reuse the original key so Stripe deduplicates it.
+    """
+    definitive = isinstance(exc, (stripe.InvalidRequestError, stripe.CardError))
+    return ProviderError(str(exc), definitive=definitive)
+
+
 class StripePaymentProvider:
     def __init__(self, secret_key: str) -> None:
         self._client = stripe.StripeClient(secret_key)
@@ -257,7 +269,7 @@ class StripePaymentProvider:
         metadata: dict,
     ) -> str:
         try:
-            intent = self._client.payment_intents.create(
+            intent = self._client.v1.payment_intents.create(
                 params={
                     "amount": amount_cents,
                     "currency": currency.lower(),
@@ -267,7 +279,19 @@ class StripePaymentProvider:
                     "confirm": True,
                     "off_session": True,
                     "metadata": metadata,
-                }
+                },
+                # Keyed by job *and* by the terms of the charge. An identical
+                # retry returns the original hold instead of placing a second
+                # one; a genuinely different charge — new amount after a new
+                # offer, or a different card — gets its own key. Keying on the
+                # job alone makes the provider reject the second case outright,
+                # because a key may only be reused with identical parameters.
+                options={
+                    "idempotency_key": (
+                        f"authorize:{metadata.get('job_id')}"
+                        f":{amount_cents}:{payment_method_ref[-14:]}"
+                    )
+                },
             )
         except stripe.StripeError as exc:
             raise ProviderError(str(exc)) from exc
@@ -276,21 +300,34 @@ class StripePaymentProvider:
         return intent.id
 
     def capture(self, auth_ref: str) -> str:
+        """Capture an authorization, tolerating a capture that already landed.
+
+        Stripe can perform the capture and *then* fail the response — a
+        transient error after the money moved. Retrying naively raises "already
+        captured" forever while our records still say authorized, so the money
+        is taken but never credited to anyone. Treat an already-succeeded intent
+        as the success it is.
+        """
         try:
-            intent = self._client.payment_intents.capture(auth_ref)
+            intent = self._client.v1.payment_intents.capture(auth_ref)
         except stripe.StripeError as exc:
-            raise ProviderError(str(exc)) from exc
+            try:
+                intent = self._client.v1.payment_intents.retrieve(auth_ref)
+            except stripe.StripeError:
+                raise ProviderError(str(exc)) from exc
+            if intent.status != "succeeded":
+                raise ProviderError(str(exc)) from exc
         return intent.latest_charge or auth_ref
 
     def release(self, auth_ref: str) -> None:
         try:
-            self._client.payment_intents.cancel(auth_ref)
+            self._client.v1.payment_intents.cancel(auth_ref)
         except stripe.StripeError as exc:
             raise ProviderError(str(exc)) from exc
 
     def refund(self, charge_ref: str, amount_cents: int) -> str:
         try:
-            refund = self._client.refunds.create(
+            refund = self._client.v1.refunds.create(
                 params={"charge": charge_ref, "amount": amount_cents}
             )
         except stripe.StripeError as exc:
@@ -318,5 +355,5 @@ class StripePaymentProvider:
                 }
             )
         except stripe.StripeError as exc:
-            raise ProviderError(str(exc)) from exc
+            raise _provider_error(exc) from exc
         return transfer.id

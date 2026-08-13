@@ -64,6 +64,11 @@ class Payment(Base):
     provider_auth_ref: Mapped[str] = mapped_column(String(64))
     provider_charge_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     provider_payout_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Bumped only when a payout attempt fails *definitively*. The provider caches
+    # responses per idempotency key — including errors — so a key reused after a
+    # failure replays that failure until the cache expires, and the worker never
+    # gets paid. The counter gives each genuine retry a fresh key.
+    payout_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     @property

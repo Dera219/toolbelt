@@ -195,3 +195,83 @@ def test_payment_visibility_is_parties_only(client):
     register(client, "stranger@example.com")
     stranger = login(client, "stranger@example.com")
     assert client.get(f"/jobs/{job['id']}/payment", headers=stranger).status_code == 403
+
+
+def test_payout_failure_does_not_undo_the_capture(client, monkeypatch):
+    """A payout can fail for reasons unrelated to the job — an unsettled
+    balance, a provider outage. The customer has still paid, so the capture and
+    the debt owed to the worker must survive it."""
+    from app.modules.payments.provider import ProviderError
+
+    job, customer, worker = _accepted_job(client)
+    account = client.post("/me/payout-account", headers=worker).json()
+    _enable_payouts(client, account["provider_account_ref"])
+
+    def refuse(*args, **kwargs):
+        raise ProviderError("insufficient available funds", definitive=True)
+
+    monkeypatch.setattr(_fake_provider, "transfer", refuse)
+    client.post(f"/jobs/{job['id']}/start", headers=worker)
+    resp = client.post(f"/jobs/{job['id']}/complete", headers=worker)
+    assert resp.status_code == 200, "a failed payout must not fail the job"
+
+    payment = client.get(f"/jobs/{job['id']}/payment", headers=worker).json()
+    assert payment["status"] == "captured"
+    assert client.get("/me/balance", headers=worker).json()["balance_cents"] == 8500
+
+
+def test_definitive_payout_failure_advances_the_idempotency_key(client, monkeypatch):
+    """Providers cache responses per idempotency key, errors included. Reusing a
+    key after a definitive failure replays that failure until the cache expires,
+    so the retry must carry a fresh one."""
+    from sqlalchemy import select
+
+    from app.core.db import SessionLocal
+    from app.modules.payments.models import Payment
+    from app.modules.payments.provider import ProviderError
+
+    job, customer, worker = _accepted_job(client)
+    account = client.post("/me/payout-account", headers=worker).json()
+    _enable_payouts(client, account["provider_account_ref"])
+
+    keys: list[str] = []
+
+    def refuse(*args, idempotency_key=None, **kwargs):
+        keys.append(idempotency_key)
+        raise ProviderError("insufficient available funds", definitive=True)
+
+    monkeypatch.setattr(_fake_provider, "transfer", refuse)
+    client.post(f"/jobs/{job['id']}/start", headers=worker)
+    client.post(f"/jobs/{job['id']}/complete", headers=worker)
+    client.post("/me/payout-account", headers=worker)  # explicit retry
+
+    assert len(keys) >= 2, "the payout should have been retried"
+    assert keys[0] != keys[1], f"retry reused a poisoned key: {keys}"
+
+    with SessionLocal() as db:
+        payment = db.scalar(select(Payment).where(Payment.job_id == job["id"]))
+        assert payment.payout_attempts >= 1
+
+
+def test_ambiguous_payout_failure_keeps_the_same_key(client, monkeypatch):
+    """When the outcome is unknown — a timeout — the retry must reuse the key so
+    the provider deduplicates it rather than paying the worker twice."""
+    from app.modules.payments.provider import ProviderError
+
+    job, customer, worker = _accepted_job(client)
+    account = client.post("/me/payout-account", headers=worker).json()
+    _enable_payouts(client, account["provider_account_ref"])
+
+    keys: list[str] = []
+
+    def timeout(*args, idempotency_key=None, **kwargs):
+        keys.append(idempotency_key)
+        raise ProviderError("connection reset", definitive=False)
+
+    monkeypatch.setattr(_fake_provider, "transfer", timeout)
+    client.post(f"/jobs/{job['id']}/start", headers=worker)
+    client.post(f"/jobs/{job['id']}/complete", headers=worker)
+    client.post("/me/payout-account", headers=worker)
+
+    assert len(keys) >= 2
+    assert keys[0] == keys[1], f"an unknown outcome must reuse its key: {keys}"

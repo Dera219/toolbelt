@@ -127,22 +127,30 @@ def sync_payout_account(
     retry freely — a read must never be the thing that triggers a payout.
     """
     account = db.get(PayoutAccount, user.id)
-    if account is None or account.payouts_enabled:
-        return account
-    try:
-        enabled = get_payment_provider().payouts_enabled(account.provider_account_ref)
-    except ProviderError:
-        return account  # provider hiccup must not break the screen
-    if enabled:
-        account.payouts_enabled = True
-        db.flush()
-        if release_funds:
-            try:
-                flush_pending_payouts(db, user.id)
-            except ProviderError:
-                # Same contract as above: the account state is already correct,
-                # and the payout retries on the next flush.
-                logger.warning("deferred payout flush failed for user %s", user.id)
+    if account is None:
+        return None
+
+    if not account.payouts_enabled:
+        try:
+            enabled = get_payment_provider().payouts_enabled(account.provider_account_ref)
+        except ProviderError:
+            return account  # provider hiccup must not break the screen
+        if enabled:
+            account.payouts_enabled = True
+            db.flush()
+
+    # Flush whenever funds may be released — not only in the moment the account
+    # first turns on. A payout deferred by a transient provider failure (an
+    # unsettled balance, an outage) leaves the payment CAPTURED with the money
+    # owed on the ledger; if this only ran on the enable transition, that debt
+    # would never be retried and would sit unpaid indefinitely.
+    if account.payouts_enabled and release_funds:
+        try:
+            flush_pending_payouts(db, user.id)
+        except ProviderError:
+            # The account state is already correct, and the payout retries on
+            # the next explicit attempt.
+            logger.warning("deferred payout flush failed for user %s", user.id)
     return account
 
 
@@ -234,6 +242,16 @@ def release_for_job(db: Session, job: Job) -> Payment | None:
 # ---------------------------------------------------------------- payouts
 
 
+def payout_idempotency_key(payment: Payment) -> str:
+    """The key a payout attempt is made under.
+
+    Defined once and shared, because a caller that rebuilds this string by hand
+    silently stops deduplicating the moment the format changes — and the only
+    symptom is a worker paid twice.
+    """
+    return f"payout:{payment.id}#{payment.payout_attempts}"
+
+
 def _try_payout(db: Session, payment: Payment) -> None:
     if payment.status != PaymentStatus.CAPTURED:
         return
@@ -244,13 +262,36 @@ def _try_payout(db: Session, payment: Payment) -> None:
     # before any local write, so if a later step in this transaction fails the
     # database rolls back while the money has already moved; replaying the same
     # key returns the original transfer instead of sending a second one.
-    payment.provider_payout_ref = get_payment_provider().transfer(
-        account.provider_account_ref,
-        payment.worker_net_cents,
-        payment.currency,
-        metadata={"payment_id": str(payment.id)},
-        idempotency_key=f"payout:{payment.id}",
-    )
+    try:
+        payment.provider_payout_ref = get_payment_provider().transfer(
+            account.provider_account_ref,
+            payment.worker_net_cents,
+            payment.currency,
+            metadata={"payment_id": str(payment.id)},
+            idempotency_key=payout_idempotency_key(payment),
+        )
+    except ProviderError as exc:
+        # A payout can fail for reasons unrelated to this job: an unsettled
+        # platform balance, a provider outage, a restricted account. None of
+        # that should undo the capture — the customer has paid, and the money is
+        # already owed to the worker on the ledger. Leaving the payment CAPTURED
+        # keeps that debt visible and lets flush_pending_payouts retry, instead
+        # of rolling the completion back and stranding a real charge with no
+        # local record of it.
+        #
+        # flush_pending_payouts also guards its own calls; the double guard is
+        # deliberate, so neither caller depends on the other's handling.
+        if exc.definitive:
+            # Stripe rejected it outright, so nothing moved and its cache now
+            # holds this error against the current key. Advance the counter so
+            # the next attempt uses a fresh one; reusing it would replay this
+            # failure until the cache expires and the worker would go unpaid.
+            payment.payout_attempts += 1
+        logger.warning(
+            "payout deferred for payment %s (attempt %s): %s",
+            payment.id, payment.payout_attempts, exc,
+        )
+        return
     ledger.post_transaction(
         db,
         txn_key=f"payout:{payment.id}",

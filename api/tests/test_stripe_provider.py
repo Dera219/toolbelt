@@ -318,3 +318,16 @@ def test_transfer_to_connected_account(provider):
     transfer = provider._client.transfers.retrieve(ref)
     assert transfer.amount == 85
     assert transfer.destination == CONNECTED_ACCOUNT
+
+
+def test_capture_tolerates_an_already_captured_intent(provider, customer):
+    """Stripe can capture and then fail the response. A retry must report the
+    capture that already happened, not error forever while our records say the
+    money is still only authorized."""
+    customer_ref, pm_ref = customer
+    auth_ref = provider.authorize(
+        1500, "usd", customer_ref, pm_ref, {"job_id": "capture-idempotency"},
+    )
+    first = provider.capture(auth_ref)
+    second = provider.capture(auth_ref)  # would raise "already captured" unguarded
+    assert first == second

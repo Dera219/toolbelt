@@ -95,6 +95,7 @@ def test_replayed_transfer_does_not_pay_twice(client):
     # again with the same key.
     from app.core.db import SessionLocal
     from app.modules.payments.provider import get_payment_provider
+    from app.modules.payments.service import payout_idempotency_key
 
     provider = get_payment_provider()
     with SessionLocal() as db:
@@ -109,7 +110,7 @@ def test_replayed_transfer_does_not_pay_twice(client):
             payment.worker_net_cents,
             payment.currency,
             metadata={"payment_id": str(payment.id)},
-            idempotency_key=f"payout:{payment.id}",
+            idempotency_key=payout_idempotency_key(payment),
         )
 
     assert ref_again == ref_first, "replay must return the original transfer"

@@ -11,7 +11,18 @@ from app.core.config import get_settings
 
 
 class ProviderError(Exception):
-    """A money operation was declined or failed at the provider."""
+    """A money operation was declined or failed at the provider.
+
+    `definitive` means the provider rejected the request outright and nothing
+    moved — an insufficient balance, a bad argument. Those are safe to retry
+    under a new idempotency key. When it is False the outcome is unknown (a
+    timeout, a dropped connection) and the retry must reuse the original key so
+    the provider deduplicates it rather than paying twice.
+    """
+
+    def __init__(self, message: str, *, definitive: bool = False) -> None:
+        super().__init__(message)
+        self.definitive = definitive
 
 
 class PaymentProvider(Protocol):

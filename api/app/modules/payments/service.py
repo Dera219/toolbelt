@@ -293,6 +293,12 @@ def _try_payout(db: Session, payment: Payment) -> None:
             payment.id, payment.payout_attempts, exc,
         )
         return
+    # Flush before opening the savepoint so that nothing pending from an earlier
+    # payment in flush_pending_payouts' loop is inside its scope. Otherwise the
+    # autoflush that post_transaction triggers would carry a previous payment's
+    # PAID_OUT into this savepoint, and the rollback below would silently revert
+    # a payout that already succeeded at the provider.
+    db.flush()
     try:
         # Concurrent flushes (the onboarding webhook racing GET/POST
         # /me/payout-account) can both pass the ledger's exists-check before
@@ -361,20 +367,23 @@ def refund_payment(db: Session, payment_id: int, amount_cents: int | None) -> Pa
     worker_share = amount * payment.worker_net_cents // payment.amount_cents
     platform_share = amount - worker_share
     reverse_payout = payment.status == PaymentStatus.PAID_OUT and worker_share > 0
-    if reverse_payout:
-        # The worker's share already left for their connected account, so claw
-        # it back before refunding the customer — otherwise the worker's ledger
-        # goes negative and the platform eats the loss. Runs first: a failed
-        # reversal must abort the whole refund with nothing moved. Keyed on the
-        # same cumulative amount as the ledger rows below, so a retry after a
-        # rollback replays the original reversal instead of collecting twice.
-        get_payment_provider().reverse_transfer(
-            payment.provider_payout_ref,
-            worker_share,
-            idempotency_key=f"reverse:{payment.id}:{payment.refunded_cents + amount}",
-        )
+    # The customer's refund goes first, and the worker's claw-back second.
+    #
+    # The reverse order is the tempting one — claw back before giving anything
+    # away — and it is wrong, because a reversal is irreversible at the provider
+    # while this transaction is not yet durable. If the refund then fails, the
+    # reversal is orphaned: the database rolls back knowing nothing about it, and
+    # an admin retrying at a *different* amount mints a second reversal under a
+    # different key. Measured: a failed 5000 refund left 4250 clawed back, and a
+    # 3000 retry took another 2550 — 6800 collected from a worker for a 3000
+    # refund. Refunding first cannot orphan anything the retry path double-counts.
     get_payment_provider().refund(payment.provider_charge_ref, amount)
-    entries = [("external:card_network", amount), (f"worker:{payment.worker_id}", -worker_share)]
+    # Zero-value entries are rejected by the ledger, and a refund small enough
+    # that the worker's proportional share floors to zero is a legitimate refund,
+    # not a corrupt transaction. (A 1-cent refund raised UnbalancedTransaction.)
+    entries = [("external:card_network", amount)]
+    if worker_share:
+        entries.append((f"worker:{payment.worker_id}", -worker_share))
     if platform_share:
         entries.append(("platform:revenue", -platform_share))
     ledger.post_transaction(
@@ -385,19 +394,41 @@ def refund_payment(db: Session, payment_id: int, amount_cents: int | None) -> Pa
         payment_id=payment.id,
     )
     if reverse_payout:
-        # The refund entries above drove the worker's balance negative by their
-        # share; the reversal brings that money back off the payout rail and
-        # squares them, keeping every account at zero net.
-        ledger.post_transaction(
-            db,
-            txn_key=f"reverse:{payment.id}:{payment.refunded_cents + amount}",
-            currency=payment.currency,
-            entries=[
-                ("external:payouts", -worker_share),
-                (f"worker:{payment.worker_id}", worker_share),
-            ],
-            payment_id=payment.id,
-        )
+        # The worker's share already left for their connected account, so claw it
+        # back — otherwise their ledger stays negative and the platform eats the
+        # loss. Keyed on the cumulative refunded amount so a replay is a no-op.
+        try:
+            get_payment_provider().reverse_transfer(
+                payment.provider_payout_ref,
+                worker_share,
+                idempotency_key=f"reverse:{payment.id}:{payment.refunded_cents + amount}",
+            )
+        except ProviderError:
+            # Deliberately not fatal. The customer has been refunded and that
+            # must stand; failing here would roll the refund out of the database
+            # while it stayed done at the provider, and the retry would refund
+            # them a second time. Leaving the worker un-clawed is the documented
+            # pre-existing behaviour — the platform absorbs it — and it is
+            # visible as a negative worker balance rather than silent.
+            logger.warning(
+                "transfer reversal failed for payment %s; worker:%s keeps %s cents "
+                "and the platform absorbs it. Ledger balance will show the shortfall.",
+                payment.id, payment.worker_id, worker_share, exc_info=True,
+            )
+        else:
+            # The refund entries above drove the worker's balance negative by their
+            # share; the reversal brings that money back off the payout rail and
+            # squares them, keeping every account at zero net.
+            ledger.post_transaction(
+                db,
+                txn_key=f"reverse:{payment.id}:{payment.refunded_cents + amount}",
+                currency=payment.currency,
+                entries=[
+                    ("external:payouts", -worker_share),
+                    (f"worker:{payment.worker_id}", worker_share),
+                ],
+                payment_id=payment.id,
+            )
     payment.refunded_cents += amount
     if payment.refunded_cents == payment.amount_cents:
         payment.status = PaymentStatus.REFUNDED

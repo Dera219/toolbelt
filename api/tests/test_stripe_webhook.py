@@ -28,6 +28,23 @@ def stripe_secret():
     settings.stripe_webhook_secret = previous
 
 
+@pytest.fixture()
+def no_stripe_secret():
+    """The unconfigured case, stated rather than inherited.
+
+    A developer with a real `whsec_…` in their gitignored .env had this test
+    asserting against their own machine's configuration, so it failed there and
+    passed in CI. Pinning the value here is the same move the fixture above
+    makes in the other direction, and it makes the test say what it means: with
+    no secret, the route refuses everything.
+    """
+    settings = get_settings()
+    previous = settings.stripe_webhook_secret
+    settings.stripe_webhook_secret = None
+    yield
+    settings.stripe_webhook_secret = previous
+
+
 def _sign(raw: bytes, secret: str = STRIPE_WEBHOOK_SECRET, timestamp: int | None = None) -> str:
     t = int(time.time()) if timestamp is None else timestamp
     mac = hmac.new(secret.encode(), f"{t}.".encode() + raw, hashlib.sha256).hexdigest()
@@ -208,7 +225,7 @@ def test_malformed_event_rejected(stripe_secret, client):
         assert resp.status_code == 400, payload
 
 
-def test_unconfigured_secret_returns_503(client):
+def test_unconfigured_secret_returns_503(no_stripe_secret, client):
     """Without a secret the route refuses everything loudly — registering the
     endpoint in Stripe before setting the env var must be visible, and the
     system stays correct on polling alone."""

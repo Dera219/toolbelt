@@ -35,7 +35,25 @@ def _provider_error(exc: stripe.StripeError) -> ProviderError:
     refused it — nothing moved, so a retry under a fresh idempotency key is
     safe. A connection or generic API error leaves the outcome unknown, and the
     retry must reuse the original key so Stripe deduplicates it.
+
+    An IdempotencyError is neither. Stripe raises it — HTTP 400, type
+    `idempotency_error`, "Keys for idempotent requests can only be used with the
+    same parameters they were first used with" — when a key comes back with a
+    different request body. Reaching it means an earlier call under this key was
+    accepted and this one asks for something else, so an operator has to know
+    that money may already have moved. `definitive` stays False deliberately:
+    the caller must not read this as "nothing happened, mint a fresh key",
+    because a fresh key is exactly what would send the second payment.
     """
+    if isinstance(exc, stripe.IdempotencyError):
+        return ProviderError(
+            "Stripe refused this call: its idempotency key was already used with "
+            f"different parameters ({exc}). A call has already gone out for this "
+            "operation at different terms — reconcile the payment against Stripe "
+            "before retrying, and retry at the original amount to replay the first "
+            "call safely.",
+            definitive=False,
+        )
     definitive = isinstance(exc, (stripe.InvalidRequestError, stripe.CardError))
     return ProviderError(str(exc), definitive=definitive)
 
@@ -266,7 +284,7 @@ class StripePaymentProvider:
 
     def authorize(
         self, amount_cents: int, currency: str, customer_ref: str, payment_method_ref: str,
-        metadata: dict,
+        metadata: dict, idempotency_key: str,
     ) -> str:
         try:
             intent = self._client.v1.payment_intents.create(
@@ -280,26 +298,15 @@ class StripePaymentProvider:
                     "off_session": True,
                     "metadata": metadata,
                 },
-                # Keyed by job *and* by the terms of the charge. An identical
-                # retry returns the original hold instead of placing a second
-                # one; a genuinely different charge — new amount after a new
-                # offer, or a different card — gets its own key. Keying on the
-                # job alone makes the provider reject the second case outright,
-                # because a key may only be reused with identical parameters.
-                options={
-                    "idempotency_key": (
-                        f"authorize:{metadata.get('job_id')}"
-                        f":{amount_cents}:{payment_method_ref[-14:]}"
-                    )
-                },
+                options={"idempotency_key": idempotency_key},
             )
         except stripe.StripeError as exc:
-            raise ProviderError(str(exc)) from exc
+            raise _provider_error(exc) from exc
         if intent.status != "requires_capture":
             raise ProviderError(f"Authorization not completed (status={intent.status})")
         return intent.id
 
-    def capture(self, auth_ref: str) -> str:
+    def capture(self, auth_ref: str, idempotency_key: str) -> str:
         """Capture an authorization, tolerating a capture that already landed.
 
         Stripe can perform the capture and *then* fail the response — a
@@ -307,31 +314,55 @@ class StripePaymentProvider:
         captured" forever while our records still say authorized, so the money
         is taken but never credited to anyone. Treat an already-succeeded intent
         as the success it is.
+
+        The idempotency key handles the same race one layer earlier, inside
+        Stripe's own 24-hour window; the retrieve below is what still works
+        after the key is pruned.
         """
         try:
-            intent = self._client.v1.payment_intents.capture(auth_ref)
+            intent = self._client.v1.payment_intents.capture(
+                auth_ref, options={"idempotency_key": idempotency_key}
+            )
         except stripe.StripeError as exc:
             try:
                 intent = self._client.v1.payment_intents.retrieve(auth_ref)
             except stripe.StripeError:
-                raise ProviderError(str(exc)) from exc
+                raise _provider_error(exc) from exc
             if intent.status != "succeeded":
-                raise ProviderError(str(exc)) from exc
+                raise _provider_error(exc) from exc
         return intent.latest_charge or auth_ref
 
-    def release(self, auth_ref: str) -> None:
+    def release(self, auth_ref: str, idempotency_key: str) -> None:
         try:
-            self._client.v1.payment_intents.cancel(auth_ref)
-        except stripe.StripeError as exc:
-            raise ProviderError(str(exc)) from exc
-
-    def refund(self, charge_ref: str, amount_cents: int) -> str:
-        try:
-            refund = self._client.v1.refunds.create(
-                params={"charge": charge_ref, "amount": amount_cents}
+            self._client.v1.payment_intents.cancel(
+                auth_ref, options={"idempotency_key": idempotency_key}
             )
         except stripe.StripeError as exc:
-            raise ProviderError(str(exc)) from exc
+            raise _provider_error(exc) from exc
+
+    def refund(self, charge_ref: str, amount_cents: int, idempotency_key: str) -> str:
+        """Refund a captured charge, keyed so a replay is a no-op.
+
+        This call is made before the refund is recorded locally, so a failure
+        anywhere later in the same transaction rolls the database back over a
+        refund that already happened. Replaying the key returns the original
+        refund instead of sending the customer their money a second time.
+
+        The key covers the refund *generation*, not the amount (see
+        `refund_idempotency_key`). A retry at a different amount therefore
+        arrives at Stripe as the same key with a different body, and Stripe
+        answers with an idempotency_error — mapped by `_provider_error` into a
+        message that tells an operator to reconcile. Loud is the point: the
+        alternative, a key that includes the amount, would quietly issue a
+        second real refund.
+        """
+        try:
+            refund = self._client.v1.refunds.create(
+                params={"charge": charge_ref, "amount": amount_cents},
+                options={"idempotency_key": idempotency_key},
+            )
+        except stripe.StripeError as exc:
+            raise _provider_error(exc) from exc
         return refund.id
 
     def transfer(

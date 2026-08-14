@@ -69,13 +69,28 @@ class PaymentProvider(Protocol):
 
     def set_default_payment_method(self, customer_ref: str, payment_method_ref: str) -> None: ...
 
+    # Every method below moves money, and every one of them takes an
+    # `idempotency_key`. It is required rather than optional on purpose: the one
+    # call that lacked it — refund — is the one that could refund a customer
+    # twice, and an optional parameter is an invitation to forget it again. The
+    # keys are built in service.py and the calls are made through
+    # journal.execute_provider_call, never directly.
     def authorize(
         self, amount_cents: int, currency: str, customer_ref: str, payment_method_ref: str,
-        metadata: dict,
+        metadata: dict, idempotency_key: str,
     ) -> str: ...
-    def capture(self, auth_ref: str) -> str: ...
-    def release(self, auth_ref: str) -> None: ...
-    def refund(self, charge_ref: str, amount_cents: int) -> str: ...
+    def capture(self, auth_ref: str, idempotency_key: str) -> str: ...
+    def release(self, auth_ref: str, idempotency_key: str) -> None: ...
+    def refund(self, charge_ref: str, amount_cents: int, idempotency_key: str) -> str:
+        """Return part or all of a captured charge to the customer.
+
+        The key is keyed on the refund *generation* — the amount already
+        refunded before this one — and deliberately not on the new amount. See
+        `refund_idempotency_key` in service.py for why that trade is the right
+        way round.
+        """
+        ...
+
     def transfer(
         self, account_ref: str, amount_cents: int, currency: str, metadata: dict,
         idempotency_key: str,
@@ -124,6 +139,7 @@ class FakePaymentProvider:
         self.captures: list[str] = []
         self.releases: list[str] = []
         self.refunds: list[tuple[str, int]] = []
+        self._refund_keys: dict[str, str] = {}
         self.transfers: list[dict] = []
         self._transfer_keys: dict[str, str] = {}
         self.fail_next_transfer = False
@@ -183,27 +199,39 @@ class FakePaymentProvider:
 
     def authorize(
         self, amount_cents: int, currency: str, customer_ref: str, payment_method_ref: str,
-        metadata: dict,
+        metadata: dict, idempotency_key: str,
     ) -> str:
         if self.fail_next_authorize:
             self.fail_next_authorize = False
             raise ProviderError("Card declined")
         ref = self._ref("auth")
         self.authorizations.append(
-            {"ref": ref, "amount_cents": amount_cents, "currency": currency, **metadata}
+            {
+                "ref": ref,
+                "amount_cents": amount_cents,
+                "currency": currency,
+                "idempotency_key": idempotency_key,
+                **metadata,
+            }
         )
         return ref
 
-    def capture(self, auth_ref: str) -> str:
+    def capture(self, auth_ref: str, idempotency_key: str) -> str:
         self.captures.append(auth_ref)
         return auth_ref.replace("auth_", "ch_")
 
-    def release(self, auth_ref: str) -> None:
+    def release(self, auth_ref: str, idempotency_key: str) -> None:
         self.releases.append(auth_ref)
 
-    def refund(self, charge_ref: str, amount_cents: int) -> str:
+    def refund(self, charge_ref: str, amount_cents: int, idempotency_key: str) -> str:
+        # Same replay contract as transfer: a reused key returns the original
+        # refund rather than sending the customer their money a second time.
+        if idempotency_key in self._refund_keys:
+            return self._refund_keys[idempotency_key]
+        ref = self._ref("re")
+        self._refund_keys[idempotency_key] = ref
         self.refunds.append((charge_ref, amount_cents))
-        return self._ref("re")
+        return ref
 
     def transfer(
         self, account_ref: str, amount_cents: int, currency: str, metadata: dict,

@@ -21,7 +21,13 @@ from app.modules.trust import models as _trust  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers` defaults to True, which switches off every
+    # logger that already exists — including the application's. Harmless when
+    # alembic runs as its own process (how the Dockerfile deploys it), but the
+    # migration-drift test runs `command.upgrade` in-process, and every test
+    # after it then had a silenced app logger. Warnings that a money path emits
+    # are worth more than alembic's preference here.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 config.set_main_option(
     "sqlalchemy.url", normalize_database_url(get_settings().database_url)

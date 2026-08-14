@@ -2,6 +2,8 @@ import hashlib
 import hmac
 import json
 
+import pytest
+
 from app.modules.payments.provider import _fake_provider
 from tests.conftest import customer_with_pm, login, make_admin, make_worker, post_job, register
 
@@ -267,7 +269,8 @@ def test_failed_reversal_leaves_the_refund_standing(client, monkeypatch):
 
 
 def test_a_failed_refund_cannot_orphan_a_reversal(client, monkeypatch):
-    """A reversal must never outlive the refund that justified it.
+    """A reversal must never outlive the refund that justified it, and a retry
+    at a new amount must never stack on top of one that may have landed.
 
     With the claw-back running first, a refund that failed afterwards left the
     reversal orphaned at the provider — the database rolled back knowing nothing
@@ -275,6 +278,12 @@ def test_a_failed_refund_cannot_orphan_a_reversal(client, monkeypatch):
     under a different key. Measured before the fix: a failed 5000 refund clawed
     4250, then a 3000 retry clawed another 2550, taking 6800 from the worker to
     fund a 3000 refund.
+
+    Refunding first fixed the orphan. The refund idempotency key closes the
+    other half: the failed 5000 attempt has an unknown outcome, so the 3000
+    retry is refused outright rather than risking 8000 out the door, and the
+    operator is told to reconcile. Retrying at the original amount is the
+    sanctioned recovery and replays the first attempt safely.
     """
     from app.modules.payments.provider import ProviderError
 
@@ -295,13 +304,55 @@ def test_a_failed_refund_cannot_orphan_a_reversal(client, monkeypatch):
     assert _fake_provider.transfer_reversals == [], "nothing may be clawed back for a refund that never happened"
 
     monkeypatch.setattr(_fake_provider, "refund", original_refund)
-    retry = client.post(
+    different_amount = client.post(
         f"/admin/payments/{payment_id}/refund", json={"amount_cents": 3000}, headers=admin
     )
+    assert different_amount.status_code == 409, different_amount.text
+    assert "reconcile" in different_amount.json()["detail"].lower()
+    assert _fake_provider.refunds == [], "a refused retry must not reach the provider"
+    assert _fake_provider.transfer_reversals == []
+
+    retry = client.post(
+        f"/admin/payments/{payment_id}/refund", json={"amount_cents": 5000}, headers=admin
+    )
     assert retry.status_code == 200, retry.text
-    assert retry.json()["refunded_cents"] == 3000
+    assert retry.json()["refunded_cents"] == 5000
     clawed = sum(r["amount_cents"] for r in _fake_provider.transfer_reversals)
-    assert clawed == 3000 * 8500 // 10000, f"clawed {clawed} back for a 3000 refund"
+    assert clawed == 5000 * 8500 // 10000, f"clawed {clawed} back for a 5000 refund"
+    assert client.get("/admin/ledger/trial-balance", headers=admin).json()["balanced"] is True
+
+
+def test_a_refund_that_already_left_is_never_sent_twice(client, monkeypatch):
+    """The defect this whole path exists for, end to end.
+
+    The refund executes at the provider before anything local is written. Crash
+    anywhere after it — here the ledger write — and the database rolls back with
+    no record that a customer was refunded. The admin, seeing refunded_cents
+    still at zero, refunds again. Before the journal that sent the money a
+    second time; now the retry replays the recorded call and moves nothing.
+    """
+    job, customer, worker = _paid_out_job(client)
+    admin = make_admin(client)
+    payment_id = client.get(f"/jobs/{job['id']}/payment", headers=customer).json()["id"]
+
+    from app.modules.payments import service
+
+    def crash(*args, **kwargs):
+        raise RuntimeError("simulated crash after the money moved")
+
+    monkeypatch.setattr(service.ledger, "post_transaction", crash)
+    with pytest.raises(RuntimeError):
+        client.post(f"/admin/payments/{payment_id}/refund", json={}, headers=admin)
+
+    assert len(_fake_provider.refunds) == 1, "the refund really did leave"
+    payment = client.get(f"/jobs/{job['id']}/payment", headers=customer).json()
+    assert payment["refunded_cents"] == 0, "...and the database rolled back knowing nothing of it"
+
+    monkeypatch.undo()
+    retry = client.post(f"/admin/payments/{payment_id}/refund", json={}, headers=admin)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["refunded_cents"] == 10000
+    assert len(_fake_provider.refunds) == 1, "the customer must not be refunded a second time"
     assert client.get("/admin/ledger/trial-balance", headers=admin).json()["balanced"] is True
 
 

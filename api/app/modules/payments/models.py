@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -101,6 +102,56 @@ class LedgerEntry(Base):
     currency: Mapped[str] = mapped_column(String(3))
     payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProviderCallStatus(str, enum.Enum):
+    PENDING = "pending"  # recorded before the call; outcome unknown
+    SUCCEEDED = "succeeded"  # the provider accepted it and returned provider_ref
+    FAILED = "failed"  # the last attempt raised; see `error`
+
+
+class ProviderCall(Base):
+    """Every money-moving request we have made to the payment provider.
+
+    The ledger records what money *did*. This records what we *asked the
+    provider to do*, and it is the other half of the same story: a provider call
+    is an irreversible external effect made from inside a database transaction
+    that is not yet durable, so a failure after the call rolls the database back
+    while the money has already moved. Without this table the retry has no
+    memory of the first attempt and pays a second time.
+
+    Rows are written through app.modules.payments.journal, which commits them on
+    their own connection so they survive the rollback they exist to outlive.
+
+    `payment_id` is deliberately a plain integer and NOT a foreign key. The
+    journal must be writable at moments when the payment row is either not yet
+    created (authorize) or only visible inside the uncommitted business
+    transaction; a real constraint would make the referential check depend on
+    that transaction's visibility and could refuse — or on Postgres block on —
+    the very write that is supposed to make the call safe. Refusing to pay
+    someone because of a referential-integrity artifact is a worse failure than
+    an unenforced reference.
+    """
+
+    __tablename__ = "provider_calls"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # The natural key. Unique so two processes racing the same logical operation
+    # resolve to one row rather than two calls.
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True)
+    operation: Mapped[str] = mapped_column(String(32))
+    payment_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # sha256 of the call's parameters. A key that comes back with a different
+    # fingerprint means someone is retrying the same logical operation with
+    # different terms, which is the shape of a double-spend.
+    request_fingerprint: Mapped[str] = mapped_column(String(64))
+    status: Mapped[ProviderCallStatus] = mapped_column(Enum(ProviderCallStatus), index=True)
+    provider_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class WebhookEvent(Base):

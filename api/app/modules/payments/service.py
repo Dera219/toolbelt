@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.modules.identity.models import User
 from app.modules.jobs.models import Job
 from app.modules.payments import ledger
+from app.modules.payments.journal import ProviderCallConflict, execute_provider_call
 from app.modules.payments.models import (
     BillingProfile,
     Payment,
@@ -26,6 +27,90 @@ logger = logging.getLogger(__name__)
 
 def _fee_cents(amount_cents: int) -> int:
     return amount_cents * get_settings().platform_fee_bps // 10_000
+
+
+# ---------------------------------------------------------------- idempotency keys
+#
+# One key per logical money movement, built here and nowhere else. A caller that
+# rebuilds one of these strings by hand silently stops deduplicating the moment
+# the format changes, and the only symptom is somebody paid twice.
+#
+# Each string is the provider's idempotency key and the journal's natural key at
+# once (journal.py), so the local record and the provider's own deduplication
+# can never disagree about what "the same call" means.
+#
+# The authorize, payout and reversal spellings are already in flight against
+# live Stripe and are kept exactly as they were. Renaming a key that a pending
+# call was made under re-arms the double-spend it exists to prevent: the
+# provider sees a brand-new request and moves the money again. The three keys
+# introduced with the journal say `-call` to stay visibly distinct from the
+# ledger transaction keys, which share the same operation names but a different
+# namespace and — for refunds — a deliberately different suffix.
+
+
+def authorize_idempotency_key(job_id: int, amount_cents: int, payment_method_ref: str) -> str:
+    """Keyed by job *and* by the terms of the charge.
+
+    An identical retry returns the original hold instead of placing a second
+    one; a genuinely different charge — a new amount after a new offer, or a
+    different card — gets its own key. Keying on the job alone makes the
+    provider reject that second case outright, because a key may only be reused
+    with identical parameters.
+    """
+    return f"authorize:{job_id}:{amount_cents}:{payment_method_ref[-14:]}"
+
+
+def capture_idempotency_key(payment: Payment) -> str:
+    """One capture per payment, ever. The ledger's transaction for the same
+    event is `capture:{payment.id}`; this is a different namespace and says so."""
+    return f"capture-call:{payment.id}"
+
+
+def release_idempotency_key(payment: Payment) -> str:
+    """One cancellation per payment, ever."""
+    return f"release-call:{payment.id}"
+
+
+def payout_idempotency_key(payment: Payment) -> str:
+    """The key a payout attempt is made under.
+
+    The attempt counter is part of it because the provider caches failures too:
+    a key reused after a definitive rejection replays that rejection until the
+    cache expires, and the worker never gets paid.
+    """
+    return f"payout:{payment.id}#{payment.payout_attempts}"
+
+
+def refund_idempotency_key(payment: Payment) -> str:
+    """Keyed on the refund *generation* — what was already refunded before this
+    one — and deliberately NOT on the amount being refunded now.
+
+    Including the amount is the tempting version and it is the dangerous one. A
+    retry at a different amount would mint a different key, and a different key
+    is a second real refund on top of a first one that may well have landed.
+    That is exactly the trap the transfer reversals fell into: a failed 5000
+    refund followed by a 3000 retry double-collected, because the two attempts
+    keyed differently.
+
+    Keying on the generation instead makes the two retries meet:
+      - the same amount replays the original refund and moves nothing;
+      - a different amount reuses a key with a different body, which the journal
+        refuses outright and which Stripe would reject with an idempotency_error
+        anyway. An operator gets told to reconcile instead of a customer getting
+        refunded twice.
+
+    The ledger's transaction key for the same refund is
+    `refund:{payment.id}:{refunded_cents + amount}` — the cumulative total
+    *after* the refund. Different namespace, different suffix, different prefix,
+    so the two can never be confused for one another.
+    """
+    return f"refund-call:{payment.id}:{payment.refunded_cents}"
+
+
+def reversal_idempotency_key(payment: Payment, amount_cents: int) -> str:
+    """Claw-backs key on the cumulative refunded total, matching the ledger
+    transaction that records them."""
+    return f"reverse:{payment.id}:{payment.refunded_cents + amount_cents}"
 
 
 # ---------------------------------------------------------------- accounts
@@ -183,13 +268,30 @@ def authorize_for_job(db: Session, customer: User, job: Job, price_cents: int) -
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED, detail="Add a payment method before booking"
         )
+    key = authorize_idempotency_key(job.id, price_cents, billing.default_payment_method_ref)
     try:
-        auth_ref = get_payment_provider().authorize(
-            price_cents,
-            job.currency,
-            billing.provider_customer_ref,
-            billing.default_payment_method_ref,
-            metadata={"job_id": str(job.id)},
+        auth_ref = execute_provider_call(
+            db,
+            key=key,
+            operation="authorize",
+            # No payment row exists yet — this call is what justifies creating
+            # one — so the journal entry stands alone until then.
+            payment_id=None,
+            params={
+                "amount": price_cents,
+                "currency": job.currency,
+                "customer": billing.provider_customer_ref,
+                "payment_method": billing.default_payment_method_ref,
+                "job_id": job.id,
+            },
+            fn=lambda: get_payment_provider().authorize(
+                price_cents,
+                job.currency,
+                billing.provider_customer_ref,
+                billing.default_payment_method_ref,
+                metadata={"job_id": str(job.id)},
+                idempotency_key=key,
+            ),
         )
     except ProviderError as exc:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, detail=f"Payment failed: {exc}")
@@ -212,7 +314,17 @@ def capture_for_job(db: Session, job: Job) -> Payment | None:
     payment = db.scalar(select(Payment).where(Payment.job_id == job.id))
     if payment is None or payment.status != PaymentStatus.AUTHORIZED:
         return payment
-    payment.provider_charge_ref = get_payment_provider().capture(payment.provider_auth_ref)
+    capture_key = capture_idempotency_key(payment)
+    payment.provider_charge_ref = execute_provider_call(
+        db,
+        key=capture_key,
+        operation="capture",
+        payment_id=payment.id,
+        params={"auth_ref": payment.provider_auth_ref},
+        fn=lambda: get_payment_provider().capture(
+            payment.provider_auth_ref, idempotency_key=capture_key
+        ),
+    )
     payment.status = PaymentStatus.CAPTURED
     ledger.post_transaction(
         db,
@@ -234,23 +346,28 @@ def release_for_job(db: Session, job: Job) -> Payment | None:
     payment = db.scalar(select(Payment).where(Payment.job_id == job.id))
     if payment is None or payment.status != PaymentStatus.AUTHORIZED:
         return payment
-    get_payment_provider().release(payment.provider_auth_ref)
+    release_key = release_idempotency_key(payment)
+
+    def _release() -> str:
+        get_payment_provider().release(payment.provider_auth_ref, idempotency_key=release_key)
+        # A cancellation creates no object of its own, so the journal records
+        # the authorization it voided — the only reference there is.
+        return payment.provider_auth_ref
+
+    execute_provider_call(
+        db,
+        key=release_key,
+        operation="release",
+        payment_id=payment.id,
+        params={"auth_ref": payment.provider_auth_ref},
+        fn=_release,
+    )
     payment.status = PaymentStatus.RELEASED
     db.flush()
     return payment
 
 
 # ---------------------------------------------------------------- payouts
-
-
-def payout_idempotency_key(payment: Payment) -> str:
-    """The key a payout attempt is made under.
-
-    Defined once and shared, because a caller that rebuilds this string by hand
-    silently stops deduplicating the moment the format changes — and the only
-    symptom is a worker paid twice.
-    """
-    return f"payout:{payment.id}#{payment.payout_attempts}"
 
 
 def _try_payout(db: Session, payment: Payment) -> None:
@@ -263,13 +380,25 @@ def _try_payout(db: Session, payment: Payment) -> None:
     # before any local write, so if a later step in this transaction fails the
     # database rolls back while the money has already moved; replaying the same
     # key returns the original transfer instead of sending a second one.
+    payout_key = payout_idempotency_key(payment)
     try:
-        payout_ref = get_payment_provider().transfer(
-            account.provider_account_ref,
-            payment.worker_net_cents,
-            payment.currency,
-            metadata={"payment_id": str(payment.id)},
-            idempotency_key=payout_idempotency_key(payment),
+        payout_ref = execute_provider_call(
+            db,
+            key=payout_key,
+            operation="transfer",
+            payment_id=payment.id,
+            params={
+                "destination": account.provider_account_ref,
+                "amount": payment.worker_net_cents,
+                "currency": payment.currency,
+            },
+            fn=lambda: get_payment_provider().transfer(
+                account.provider_account_ref,
+                payment.worker_net_cents,
+                payment.currency,
+                metadata={"payment_id": str(payment.id)},
+                idempotency_key=payout_key,
+            ),
         )
     except ProviderError as exc:
         # A payout can fail for reasons unrelated to this job: an unsettled
@@ -377,7 +506,29 @@ def refund_payment(db: Session, payment_id: int, amount_cents: int | None) -> Pa
     # different key. Measured: a failed 5000 refund left 4250 clawed back, and a
     # 3000 retry took another 2550 — 6800 collected from a worker for a 3000
     # refund. Refunding first cannot orphan anything the retry path double-counts.
-    get_payment_provider().refund(payment.provider_charge_ref, amount)
+    #
+    # The refund goes out through the journal, which is what makes the retry
+    # after a rolled-back transaction safe: a generation whose refund already
+    # succeeded is replayed from the record instead of being sent again, and a
+    # retry at a different amount is refused rather than stacked on top of it.
+    refund_key = refund_idempotency_key(payment)
+    try:
+        execute_provider_call(
+            db,
+            key=refund_key,
+            operation="refund",
+            payment_id=payment.id,
+            params={"charge": payment.provider_charge_ref, "amount": amount},
+            fn=lambda: get_payment_provider().refund(
+                payment.provider_charge_ref, amount, idempotency_key=refund_key
+            ),
+        )
+    except ProviderCallConflict as exc:
+        # An admin retrying the same refund at a new amount. Answer them
+        # directly — this is an admin-only route and the detail is the whole
+        # value: a generic 502 would send them to the logs to find out that a
+        # refund may already be sitting at the provider.
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
     # Zero-value entries are rejected by the ledger, and a refund small enough
     # that the worker's proportional share floors to zero is a legitimate refund,
     # not a corrupt transaction. (A 1-cent refund raised UnbalancedTransaction.)
@@ -397,11 +548,19 @@ def refund_payment(db: Session, payment_id: int, amount_cents: int | None) -> Pa
         # The worker's share already left for their connected account, so claw it
         # back — otherwise their ledger stays negative and the platform eats the
         # loss. Keyed on the cumulative refunded amount so a replay is a no-op.
+        reversal_key = reversal_idempotency_key(payment, amount)
         try:
-            get_payment_provider().reverse_transfer(
-                payment.provider_payout_ref,
-                worker_share,
-                idempotency_key=f"reverse:{payment.id}:{payment.refunded_cents + amount}",
+            execute_provider_call(
+                db,
+                key=reversal_key,
+                operation="reverse_transfer",
+                payment_id=payment.id,
+                params={"transfer": payment.provider_payout_ref, "amount": worker_share},
+                fn=lambda: get_payment_provider().reverse_transfer(
+                    payment.provider_payout_ref,
+                    worker_share,
+                    idempotency_key=reversal_key,
+                ),
             )
         except ProviderError:
             # Deliberately not fatal. The customer has been refunded and that

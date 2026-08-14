@@ -48,6 +48,17 @@ PM_VISA = "pm_card_visa"
 PM_DECLINED = "pm_card_chargeDeclined"
 
 
+def _key(label: str) -> str:
+    """A single-use idempotency key.
+
+    Stripe keeps a key's result for 24 hours, so a fixed string would make the
+    second run of a test replay the first run's object instead of exercising the
+    call. Tests that are *about* replay build their key once and reuse it
+    deliberately.
+    """
+    return f"itest-{label}-{uuid.uuid4()}"
+
+
 def _make_payment_method(provider: StripePaymentProvider, token: str = "tok_visa") -> str:
     """Create a concrete PaymentMethod and return its id.
 
@@ -150,7 +161,8 @@ def test_attach_invalid_payment_method_raises_provider_error(provider, customer)
 def test_authorize_holds_without_charging(provider, customer):
     customer_ref, pm_ref = customer
     auth_ref = provider.authorize(
-        100, "usd", customer_ref, pm_ref, {"job_id": "itest-authorize"}
+        100, "usd", customer_ref, pm_ref, {"job_id": "itest-authorize"},
+        idempotency_key=_key("authorize"),
     )
     assert auth_ref.startswith("pi_")
 
@@ -163,13 +175,16 @@ def test_authorize_holds_without_charging(provider, customer):
     assert intent.amount_received == 0
     assert intent.metadata["job_id"] == "itest-authorize"
 
-    provider.release(auth_ref)
+    provider.release(auth_ref, idempotency_key=_key("release"))
 
 
 def test_capture_charges_the_held_amount(provider, customer):
     customer_ref, pm_ref = customer
-    auth_ref = provider.authorize(100, "usd", customer_ref, pm_ref, {"job_id": "itest-capture"})
-    charge_ref = provider.capture(auth_ref)
+    auth_ref = provider.authorize(
+        100, "usd", customer_ref, pm_ref, {"job_id": "itest-capture"},
+        idempotency_key=_key("authorize"),
+    )
+    charge_ref = provider.capture(auth_ref, idempotency_key=_key("capture"))
 
     assert charge_ref.startswith("ch_"), f"expected a charge id, got {charge_ref!r}"
     intent = provider._client.payment_intents.retrieve(auth_ref)
@@ -179,8 +194,11 @@ def test_capture_charges_the_held_amount(provider, customer):
 
 def test_release_cancels_the_hold(provider, customer):
     customer_ref, pm_ref = customer
-    auth_ref = provider.authorize(100, "usd", customer_ref, pm_ref, {"job_id": "itest-release"})
-    provider.release(auth_ref)
+    auth_ref = provider.authorize(
+        100, "usd", customer_ref, pm_ref, {"job_id": "itest-release"},
+        idempotency_key=_key("authorize"),
+    )
+    provider.release(auth_ref, idempotency_key=_key("release"))
 
     intent = provider._client.payment_intents.retrieve(auth_ref)
     assert intent.status == "canceled"
@@ -189,10 +207,13 @@ def test_release_cancels_the_hold(provider, customer):
 
 def test_full_refund_after_capture(provider, customer):
     customer_ref, pm_ref = customer
-    auth_ref = provider.authorize(100, "usd", customer_ref, pm_ref, {"job_id": "itest-refund"})
-    charge_ref = provider.capture(auth_ref)
+    auth_ref = provider.authorize(
+        100, "usd", customer_ref, pm_ref, {"job_id": "itest-refund"},
+        idempotency_key=_key("authorize"),
+    )
+    charge_ref = provider.capture(auth_ref, idempotency_key=_key("capture"))
 
-    refund_ref = provider.refund(charge_ref, 100)
+    refund_ref = provider.refund(charge_ref, 100, idempotency_key=_key("refund"))
     assert refund_ref.startswith("re_")
 
     charge = provider._client.charges.retrieve(charge_ref)
@@ -202,10 +223,13 @@ def test_full_refund_after_capture(provider, customer):
 
 def test_partial_refund_leaves_remainder_captured(provider, customer):
     customer_ref, pm_ref = customer
-    auth_ref = provider.authorize(200, "usd", customer_ref, pm_ref, {"job_id": "itest-partial"})
-    charge_ref = provider.capture(auth_ref)
+    auth_ref = provider.authorize(
+        200, "usd", customer_ref, pm_ref, {"job_id": "itest-partial"},
+        idempotency_key=_key("authorize"),
+    )
+    charge_ref = provider.capture(auth_ref, idempotency_key=_key("capture"))
 
-    provider.refund(charge_ref, 75)
+    provider.refund(charge_ref, 75, idempotency_key=_key("refund"))
 
     charge = provider._client.charges.retrieve(charge_ref)
     assert charge.amount_refunded == 75
@@ -216,14 +240,86 @@ def test_end_to_end_dollar_transaction(provider, customer):
     """The Phase 2 exit criterion, as a single test: a real $1.00 authorize →
     capture → refund against Stripe test mode."""
     customer_ref, pm_ref = customer
-    auth_ref = provider.authorize(100, "usd", customer_ref, pm_ref, {"job_id": "itest-e2e"})
+    auth_ref = provider.authorize(
+        100, "usd", customer_ref, pm_ref, {"job_id": "itest-e2e"},
+        idempotency_key=_key("authorize"),
+    )
     assert provider._client.payment_intents.retrieve(auth_ref).status == "requires_capture"
 
-    charge_ref = provider.capture(auth_ref)
+    charge_ref = provider.capture(auth_ref, idempotency_key=_key("capture"))
     assert provider._client.payment_intents.retrieve(auth_ref).amount_received == 100
 
-    provider.refund(charge_ref, 100)
+    provider.refund(charge_ref, 100, idempotency_key=_key("refund"))
     assert provider._client.charges.retrieve(charge_ref).amount_refunded == 100
+
+
+# --------------------------------------------------------------------------
+# Refund idempotency — the proof against Stripe itself
+# --------------------------------------------------------------------------
+
+def test_refund_replay_returns_the_original_and_does_not_refund_twice(provider, customer):
+    """The defect, closed at the rail that actually holds the money.
+
+    refund() ran with no idempotency key, and it runs before the refund is
+    recorded locally: any failure afterwards rolls the database back over a
+    refund that already happened, and the admin's retry sent the customer their
+    money a second time. The domain suite proves the flow against
+    FakePaymentProvider; this proves Stripe's half of it.
+    """
+    customer_ref, pm_ref = customer
+    auth_ref = provider.authorize(
+        400, "usd", customer_ref, pm_ref, {"job_id": "itest-refund-replay"},
+        idempotency_key=_key("authorize"),
+    )
+    charge_ref = provider.capture(auth_ref, idempotency_key=_key("capture"))
+
+    # Built once and reused on purpose — this is the retry after a rollback.
+    key = _key("refund-replay")
+    first = provider.refund(charge_ref, 250, idempotency_key=key)
+    assert first.startswith("re_")
+    assert provider._client.charges.retrieve(charge_ref).amount_refunded == 250
+
+    replay = provider.refund(charge_ref, 250, idempotency_key=key)
+    assert replay == first, "the same key must return the original refund"
+    charge = provider._client.charges.retrieve(charge_ref)
+    assert charge.amount_refunded == 250, "a replay must not refund the customer twice"
+    assert charge.refunded is False, "250 of 400 is still a partial refund"
+
+
+def test_refund_key_reused_at_a_different_amount_is_refused_loudly(provider, customer):
+    """The trade the generation-based key makes, verified rather than assumed.
+
+    The key covers the refund generation, not the amount, so a retry at a
+    different amount arrives as the same key with a different body. Stripe
+    answers with an idempotency_error — "Keys for idempotent requests can only
+    be used with the same parameters they were first used with" — instead of
+    issuing a second real refund, and the provider turns that into a message
+    naming what an operator has to do. A key that included the amount would
+    quietly refund the customer twice.
+    """
+    customer_ref, pm_ref = customer
+    auth_ref = provider.authorize(
+        400, "usd", customer_ref, pm_ref, {"job_id": "itest-refund-mismatch"},
+        idempotency_key=_key("authorize"),
+    )
+    charge_ref = provider.capture(auth_ref, idempotency_key=_key("capture"))
+
+    key = _key("refund-mismatch")
+    provider.refund(charge_ref, 250, idempotency_key=key)
+    assert provider._client.charges.retrieve(charge_ref).amount_refunded == 250
+
+    with pytest.raises(ProviderError) as raised:
+        provider.refund(charge_ref, 100, idempotency_key=key)
+
+    message = str(raised.value)
+    assert "idempotency key" in message and "reconcile" in message.lower(), message
+    assert raised.value.definitive is False, (
+        "a key/parameter mismatch must never be classified as 'nothing moved' — "
+        "that reads as permission to mint a fresh key and refund again"
+    )
+    assert provider._client.charges.retrieve(charge_ref).amount_refunded == 250, (
+        "the refused retry must not have refunded anything"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -262,7 +358,10 @@ def test_card_declining_at_charge_raises_provider_error(provider):
         pm_ref = _make_payment_method(provider, token="tok_chargeCustomerFail")
         provider.attach_payment_method(ref, pm_ref)
         with pytest.raises(ProviderError):
-            provider.authorize(100, "usd", ref, pm_ref, {"job_id": "itest-chargefail"})
+            provider.authorize(
+                100, "usd", ref, pm_ref, {"job_id": "itest-chargefail"},
+                idempotency_key=_key("authorize"),
+            )
     finally:
         try:
             provider._client.customers.delete(ref)
@@ -272,12 +371,12 @@ def test_card_declining_at_charge_raises_provider_error(provider):
 
 def test_capture_unknown_intent_raises_provider_error(provider):
     with pytest.raises(ProviderError):
-        provider.capture("pi_nonexistent_intent_id")
+        provider.capture("pi_nonexistent_intent_id", idempotency_key=_key("capture"))
 
 
 def test_refund_unknown_charge_raises_provider_error(provider):
     with pytest.raises(ProviderError):
-        provider.refund("ch_nonexistent_charge_id", 100)
+        provider.refund("ch_nonexistent_charge_id", 100, idempotency_key=_key("refund"))
 
 
 # --------------------------------------------------------------------------
@@ -361,11 +460,24 @@ def test_reverse_transfer_claws_back_and_replays_idempotently(provider):
 def test_capture_tolerates_an_already_captured_intent(provider, customer):
     """Stripe can capture and then fail the response. A retry must report the
     capture that already happened, not error forever while our records say the
-    money is still only authorized."""
+    money is still only authorized.
+
+    Both retry paths matter, because the capture key is stable per payment:
+    within 24 hours the retry replays through the idempotency key, and after
+    Stripe prunes that key the same retry arrives as a fresh request and lands
+    on "already captured" — which is what the retrieve fallback is for.
+    """
     customer_ref, pm_ref = customer
     auth_ref = provider.authorize(
         1500, "usd", customer_ref, pm_ref, {"job_id": "capture-idempotency"},
+        idempotency_key=_key("authorize"),
     )
-    first = provider.capture(auth_ref)
-    second = provider.capture(auth_ref)  # would raise "already captured" unguarded
-    assert first == second
+    key = _key("capture-idempotency")
+    first = provider.capture(auth_ref, idempotency_key=key)
+    replayed = provider.capture(auth_ref, idempotency_key=key)
+    assert replayed == first, "the same key must replay the original capture"
+
+    # A different key is the post-pruning retry: a real second call, which
+    # Stripe rejects and the retrieve fallback rescues.
+    after_pruning = provider.capture(auth_ref, idempotency_key=_key("capture-again"))
+    assert after_pruning == first

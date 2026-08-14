@@ -141,6 +141,18 @@ Every transition writes an immutable `job_events` audit row (who, what, when, fr
   of immutable ledger entries; account balances are *derived*, never stored-and-
   mutated. Uber and Airbnb both had to retrofit this painfully — Stripe's provider
   truth is not a substitute for our own books (disputes, reconciliation, audits).
+- **Provider-call journal** — the other half of the ledger. The ledger records what
+  money *did*; `provider_calls` records what we *asked the provider to do*, written
+  and committed on its own connection *before* the call. It exists because a provider
+  call is an irreversible external effect made from inside a database transaction that
+  is not yet durable: capture, transfer, refund and reversal all execute before their
+  local rows are written, so a failure later in the same transaction rolls the database
+  back while the money has already moved, and the retry — with no memory of the first
+  attempt — pays twice. Every money movement goes through one helper
+  (`payments/journal.py`), every provider method requires an idempotency key, and a key
+  that comes back with different parameters is refused rather than sent. Provider keys
+  alone are not enough: Stripe prunes them after 24 hours and then treats a reuse as a
+  new request, so the local record is what makes a next-morning repair safe.
 - Cash-market countries (later): "record cash payment, collect fee from worker
   balance" mode — this is how Uber cracked cash markets.
 

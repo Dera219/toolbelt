@@ -3,11 +3,31 @@ the domain logic (service.py, ledger.py) never imports a provider SDK directly.
 
 Dev/test: FakePaymentProvider (in-process, inspectable).
 Prod: StripePaymentProvider (stripe_provider.py), selected when a key is configured.
+
+The interface has two halves. Everything that moves money takes an
+`idempotency_key` and is called only through journal.execute_provider_call. The
+`lookup_*` methods at the bottom move nothing: they exist so the reconciliation
+sweeper (reconcile.py) can ask what actually happened without re-issuing a
+request, and they return plain dataclasses so the sweeper never touches a
+provider SDK type.
 """
 
+import enum
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
 
 from app.core.config import get_settings
+
+
+def _now() -> datetime:
+    """Timestamps the fake provider stamps on the objects it records.
+
+    Timezone-aware on purpose: the sweeper compares these against journal
+    `created_at` values, and mixing aware and naive datetimes raises rather than
+    comparing wrong — which is the failure mode worth having.
+    """
+    return datetime.now(timezone.utc)
 
 
 class ProviderError(Exception):
@@ -23,6 +43,75 @@ class ProviderError(Exception):
     def __init__(self, message: str, *, definitive: bool = False) -> None:
         super().__init__(message)
         self.definitive = definitive
+
+
+# ---------------------------------------------------------------- read-only reconciliation
+#
+# What the sweeper is allowed to know, expressed in this codebase's vocabulary
+# rather than Stripe's. Two reasons the translation happens here and not in
+# reconcile.py: the domain must not import a provider SDK (the rule the whole
+# module exists to hold), and FakePaymentProvider has to be able to answer the
+# same questions so every branch of the sweeper is reachable offline.
+
+
+class AuthorizationState(str, enum.Enum):
+    """What a customer-side authorization is currently doing at the provider.
+
+    Deliberately smaller than Stripe's PaymentIntent status set, because the
+    sweeper only ever needs to answer three questions: is money held, was it
+    taken, was the hold let go. Everything that is none of those is IN_FLIGHT —
+    the provider has not finished deciding, so neither can we.
+    """
+
+    HELD = "held"  # authorized, uncaptured: the hold is in place
+    CAPTURED = "captured"  # funds taken from the customer
+    CANCELLED = "cancelled"  # the hold was released
+    NO_HOLD = "no_hold"  # the object exists but never reached a hold (declined)
+    IN_FLIGHT = "in_flight"  # still resolving at the provider; unsafe to judge
+
+
+@dataclass(frozen=True)
+class AuthorizationRecord:
+    """A customer-side authorization as the provider currently sees it."""
+
+    ref: str
+    state: AuthorizationState
+    amount_cents: int
+    currency: str
+    customer_ref: str | None
+    payment_method_ref: str | None
+    # The charge produced by a capture. This is what `capture()` returns, so it
+    # is the reference a reconciled capture must be recorded under.
+    charge_ref: str | None
+    # metadata["job_id"] as the provider stored it — a string, always.
+    job_id: str | None
+
+
+@dataclass(frozen=True)
+class RefundRecord:
+    ref: str
+    charge_ref: str
+    amount_cents: int
+    # False for a refund the provider later failed or cancelled: the money came
+    # back to us, so it must not be counted as a refund that landed.
+    settled: bool
+
+
+@dataclass(frozen=True)
+class TransferRecord:
+    ref: str
+    account_ref: str
+    amount_cents: int
+    currency: str
+    # metadata["payment_id"] as the provider stored it — a string, always.
+    payment_id: str | None
+
+
+@dataclass(frozen=True)
+class ReversalRecord:
+    ref: str
+    transfer_ref: str
+    amount_cents: int
 
 
 class PaymentProvider(Protocol):
@@ -117,10 +206,56 @@ class PaymentProvider(Protocol):
         """
         ...
 
+    # Every method below is a READ. None of them takes an idempotency key,
+    # because none of them can create anything. They are what lets the sweeper
+    # resolve a `pending` journal row without replaying the call that produced
+    # it — a replay is a mutation whose outcome depends on whether the original
+    # request ever reached the provider, which is precisely the thing we do not
+    # know. See reconcile.py.
+    def lookup_authorization(self, auth_ref: str) -> AuthorizationRecord | None:
+        """The current state of one authorization, or None if it does not exist."""
+        ...
+
+    def lookup_authorizations_for_customer(
+        self, customer_ref: str, *, since: datetime
+    ) -> list[AuthorizationRecord]:
+        """Every authorization created for this customer since `since`.
+
+        The only way to find an authorization whose reference was never stored
+        locally: the crash that leaves an `authorize` pending happens before the
+        Payment row exists, so there is nothing to retrieve by id. Bounded by
+        time because the answer is scanned, not indexed.
+        """
+        ...
+
+    def lookup_refunds(self, charge_ref: str) -> list[RefundRecord]:
+        """Every refund the provider holds against this charge."""
+        ...
+
+    def lookup_transfers_to(
+        self, account_ref: str, *, since: datetime
+    ) -> list[TransferRecord]:
+        """Every transfer sent to this connected account since `since`."""
+        ...
+
+    def lookup_transfer_reversals(self, transfer_ref: str) -> list[ReversalRecord]:
+        """Every reversal recorded against this transfer."""
+        ...
+
 
 class FakePaymentProvider:
     """In-process provider for dev and tests. Records every call; supports failure
-    injection so decline paths are testable."""
+    injection so decline paths are testable.
+
+    It also answers the `lookup_*` reads, which is what lets the offline suite
+    exercise every branch of the reconciliation sweeper. That matters more than
+    it looks: the sweeper's whole job is deciding between "nothing happened" and
+    "I cannot tell", and a decision procedure that is only ever exercised
+    against the real API is a decision procedure nobody can test the edges of.
+    Its recorded objects therefore carry the same fields Stripe's do — amounts,
+    currency, metadata, and the state an authorization moves through — rather
+    than the minimum each call needed to return.
+    """
 
     def __init__(self) -> None:
         self.reset()
@@ -211,17 +346,36 @@ class FakePaymentProvider:
                 "amount_cents": amount_cents,
                 "currency": currency,
                 "idempotency_key": idempotency_key,
+                # The reconciliation reads need the same handles Stripe exposes:
+                # who was charged, with what, what state the hold is in now, and
+                # what charge a capture produced.
+                "customer_ref": customer_ref,
+                "payment_method_ref": payment_method_ref,
+                "state": AuthorizationState.HELD,
+                "charge_ref": None,
+                "created_at": _now(),
                 **metadata,
             }
         )
         return ref
 
+    def _authorization(self, auth_ref: str) -> dict | None:
+        return next((a for a in self.authorizations if a["ref"] == auth_ref), None)
+
     def capture(self, auth_ref: str, idempotency_key: str) -> str:
         self.captures.append(auth_ref)
-        return auth_ref.replace("auth_", "ch_")
+        charge_ref = auth_ref.replace("auth_", "ch_")
+        record = self._authorization(auth_ref)
+        if record is not None:
+            record["state"] = AuthorizationState.CAPTURED
+            record["charge_ref"] = charge_ref
+        return charge_ref
 
     def release(self, auth_ref: str, idempotency_key: str) -> None:
         self.releases.append(auth_ref)
+        record = self._authorization(auth_ref)
+        if record is not None:
+            record["state"] = AuthorizationState.CANCELLED
 
     def refund(self, charge_ref: str, amount_cents: int, idempotency_key: str) -> str:
         # Same replay contract as transfer: a reused key returns the original
@@ -230,7 +384,15 @@ class FakePaymentProvider:
             return self._refund_keys[idempotency_key]
         ref = self._ref("re")
         self._refund_keys[idempotency_key] = ref
-        self.refunds.append((charge_ref, amount_cents))
+        self.refunds.append(
+            {
+                "ref": ref,
+                "charge_ref": charge_ref,
+                "amount_cents": amount_cents,
+                "settled": True,
+                "created_at": _now(),
+            }
+        )
         return ref
 
     def transfer(
@@ -244,7 +406,14 @@ class FakePaymentProvider:
         ref = self._ref("tr")
         self._transfer_keys[idempotency_key] = ref
         self.transfers.append(
-            {"ref": ref, "account_ref": account_ref, "amount_cents": amount_cents, **metadata}
+            {
+                "ref": ref,
+                "account_ref": account_ref,
+                "amount_cents": amount_cents,
+                "currency": currency,
+                "created_at": _now(),
+                **metadata,
+            }
         )
         return ref
 
@@ -258,9 +427,81 @@ class FakePaymentProvider:
         ref = self._ref("trr")
         self._reversal_keys[idempotency_key] = ref
         self.transfer_reversals.append(
-            {"ref": ref, "transfer_ref": transfer_ref, "amount_cents": amount_cents}
+            {
+                "ref": ref,
+                "transfer_ref": transfer_ref,
+                "amount_cents": amount_cents,
+                "created_at": _now(),
+            }
         )
         return ref
+
+    # ------------------------------------------------------------ reconciliation reads
+
+    @staticmethod
+    def _as_authorization(record: dict) -> AuthorizationRecord:
+        return AuthorizationRecord(
+            ref=record["ref"],
+            state=record["state"],
+            amount_cents=record["amount_cents"],
+            currency=record["currency"],
+            customer_ref=record.get("customer_ref"),
+            payment_method_ref=record.get("payment_method_ref"),
+            charge_ref=record.get("charge_ref"),
+            # Stored as a string here for the same reason Stripe stores it as
+            # one: provider metadata is string-valued, and a sweeper that
+            # matched on an int locally would not match in production.
+            job_id=record.get("job_id"),
+        )
+
+    def lookup_authorization(self, auth_ref: str) -> AuthorizationRecord | None:
+        record = self._authorization(auth_ref)
+        return None if record is None else self._as_authorization(record)
+
+    def lookup_authorizations_for_customer(
+        self, customer_ref: str, *, since: datetime
+    ) -> list[AuthorizationRecord]:
+        return [
+            self._as_authorization(a)
+            for a in self.authorizations
+            if a.get("customer_ref") == customer_ref and a["created_at"] >= since
+        ]
+
+    def lookup_refunds(self, charge_ref: str) -> list[RefundRecord]:
+        return [
+            RefundRecord(
+                ref=r["ref"],
+                charge_ref=r["charge_ref"],
+                amount_cents=r["amount_cents"],
+                settled=r["settled"],
+            )
+            for r in self.refunds
+            if r["charge_ref"] == charge_ref
+        ]
+
+    def lookup_transfers_to(
+        self, account_ref: str, *, since: datetime
+    ) -> list[TransferRecord]:
+        return [
+            TransferRecord(
+                ref=t["ref"],
+                account_ref=t["account_ref"],
+                amount_cents=t["amount_cents"],
+                currency=t["currency"],
+                payment_id=t.get("payment_id"),
+            )
+            for t in self.transfers
+            if t["account_ref"] == account_ref and t["created_at"] >= since
+        ]
+
+    def lookup_transfer_reversals(self, transfer_ref: str) -> list[ReversalRecord]:
+        return [
+            ReversalRecord(
+                ref=r["ref"], transfer_ref=r["transfer_ref"], amount_cents=r["amount_cents"]
+            )
+            for r in self.transfer_reversals
+            if r["transfer_ref"] == transfer_ref
+        ]
 
 
 _fake_provider = FakePaymentProvider()

@@ -80,3 +80,45 @@ class RefundIn(BaseModel):
 class TrialBalanceOut(BaseModel):
     total_cents: int
     balanced: bool
+
+
+class ReconcileIn(BaseModel):
+    """Parameters for a reconciliation sweep.
+
+    `dry_run` defaults to True for the same reason the CLI does: the first run
+    against production must be incapable of changing anything, and a default that
+    writes is a default that gets triggered by a curious click.
+    """
+
+    dry_run: bool = True
+    # Rows younger than this are still plausibly in flight; judging them races
+    # the live call. Zero is allowed because the tests need it, but it is never
+    # the right value against production.
+    older_than_minutes: int = Field(default=15, ge=0, le=10_080)
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
+class ReconcileOutcomeOut(BaseModel):
+    key: str
+    operation: str
+    payment_id: int | None
+    resolution: str
+    provider_ref: str | None
+    detail: str
+    # Non-null means the journal and the local business state disagree about
+    # money. Nothing is repaired automatically — this is the handoff to a human.
+    discrepancy: str | None
+    written: bool
+
+
+class ReconcileReportOut(BaseModel):
+    dry_run: bool
+    grace_minutes: int
+    scanned: int
+    succeeded: int
+    failed: int
+    unknown: int
+    # Pending rows too young to judge. Distinct from "nothing to do".
+    in_grace_period: int
+    discrepancy_count: int
+    outcomes: list[ReconcileOutcomeOut]

@@ -134,3 +134,120 @@ forever. The onrender.com host stays enabled as a fallback.
 
 That third step is the first moment the whole system runs the way a user would
 experience it.
+
+---
+
+## Reconciling the provider-call journal
+
+Every money-moving call writes a `provider_calls` row before it dials Stripe and
+closes it out after. A crash in between leaves the row `pending`, which honestly
+means "we do not know what happened". The sweeper is what asks Stripe.
+
+It **reads only**. It never replays a call, never moves money, and never edits a
+payment or the ledger. Where Stripe and our books disagree it prints a
+DISCREPANCY and stops there — see ARCHITECTURE.md §5 for why that boundary is
+where it is.
+
+### Running it
+
+```bash
+cd api
+
+# Report only. This is the default — a first run cannot change anything.
+.venv/bin/python scripts/reconcile_provider_calls.py
+
+# Same sweep, writing the resolutions it found into the journal.
+.venv/bin/python scripts/reconcile_provider_calls.py --apply
+
+# Wider net, machine-readable.
+.venv/bin/python scripts/reconcile_provider_calls.py --older-than-minutes 60 --json
+```
+
+Same work, over HTTP, for an admin who is not on a shell:
+
+```bash
+curl -X POST https://api.toolbelt.biz/admin/payments/reconcile \
+     -H "Authorization: Bearer $ADMIN_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"dry_run": true}'
+```
+
+Both call the same service function, so the two can never drift into
+disagreeing about what a `pending` row means. `dry_run` defaults to true in both.
+
+Rows younger than `--older-than-minutes` (default 15) are counted and left alone:
+a call recorded a minute ago is probably still in flight, and judging it races
+the live attempt. Losing that race means recording "nothing moved" over money
+that lands a second later.
+
+### Wiring it to a schedule
+
+There is deliberately **no scheduler inside the app** — a background thread in a
+free-tier web service that sleeps is a new failure mode, not a feature. When it
+is worth automating, add a Render **Cron Job** against this same repo:
+
+```
+Command:  cd api && python scripts/reconcile_provider_calls.py --apply
+Schedule: 0 * * * *
+```
+
+Give it the same `TOOLBELT_DATABASE_URL` and `TOOLBELT_STRIPE_SECRET_KEY` as the
+web service. The exit code is the alerting signal:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Everything swept resolved cleanly. Nothing needs a human. |
+| `1` | At least one row is UNKNOWN. Not urgent, but it stays pending until someone looks. |
+| `2` | At least one DISCREPANCY: Stripe and our books disagree about money. Page someone. (2 wins when both are present.) |
+
+### Reading the outcomes
+
+| Outcome | What it means | What to do |
+|---|---|---|
+| **SUCCEEDED** | The call landed. Stripe holds the object, and the journal now carries its real reference. | Nothing — unless a DISCREPANCY is attached. |
+| **FAILED** | Positive evidence nothing landed: the hold is still uncaptured, the charge has no such refund, no transfer carries that payment id. The customer was not charged, the worker was not paid. | Nothing. `failed` and `pending` already mean the same thing to the retry path; the row is now just truthful. Retry through the normal path if the money *should* move. |
+| **UNKNOWN** | The sweeper could not tell, and refuses to guess. The row stays `pending`. | Read the detail — it names exactly what is missing. Some clear up on the next run (a payment intent still resolving at Stripe); some never will (below). |
+| **DISCREPANCY** | Stripe's truth and our books disagree. Attached to any outcome; escalated, never repaired. | Act on it. The message names the payment, the job, the provider reference, the amount, and the ledger transaction key that is missing. |
+
+The discrepancy headlines, and what each one costs if ignored:
+
+- `MONEY TAKEN, NOT RECORDED` — the customer paid and no ledger entry says so. The
+  worker is not credited.
+- `WORKER PAID, NOT RECORDED` — we sent a transfer the books do not know about, so
+  the worker's balance still shows money we already sent. **A second payout attempt
+  would pay them twice.**
+- `DOUBLE PAYOUT` / `DUPLICATE REFUNDS` / `DOUBLE CLAW-BACK` — the provider holds more
+  than one object for one logical movement. Somebody was paid, refunded or collected
+  from twice.
+- `CUSTOMER STILL HELD` — we consider the job cancelled and Stripe still holds the
+  customer's funds. Cancel the authorization.
+- `ORPHANED HOLD` — a hold with no payment row behind it. Nothing in this system will
+  ever capture or release it.
+- `UNCAPTURABLE PAYMENT` / `RELEASE ON A CAPTURED PAYMENT` — the job's money cannot be
+  collected, or a release was attempted against money already taken.
+- `REFUND NOT RECORDED` / `CLAW-BACK NOT RECORDED` — the movement happened at Stripe
+  and the ledger is missing its transaction.
+
+### What it cannot determine
+
+Stated here rather than discovered during an incident:
+
+- **An `authorize` whose job or billing profile is gone.** An authorize's journal row
+  carries no `payment_id` — by construction, the call is what justifies creating the
+  payment — so the only route to Stripe is job → customer → billing profile → Stripe
+  customer. Break that chain and there is no handle at all. Reported UNKNOWN.
+- **An idempotency key in an older format.** The key is the only surviving description
+  of an authorize. One that does not parse describes a call nothing can look up.
+- **A cancelled authorization.** A cancelled PaymentIntent looks identical whether it
+  held funds and was released, or was declined and then cancelled — opposite answers to
+  "did the authorize succeed?". Left pending on purpose.
+- **An authorization Stripe is still resolving.** Genuinely not yet knowable; the next
+  run sees a settled state.
+- **A refund or reversal issued by hand in the Stripe Dashboard for exactly the amount
+  we asked for.** Attribution is by amount and parent object, so a manual refund of the
+  same amount on the same charge is indistinguishable from ours. A *different* amount
+  does not match and is safely ignored.
+- **A customer with more than 100 authorizations, or a charge with more than 100
+  refunds, inside the lookback window.** The reads do not paginate; a truncated page
+  cannot support a "nothing exists" verdict, so the sweeper refuses to judge instead of
+  answering from half the data.

@@ -33,6 +33,11 @@ from app.modules.payments.stripe_provider import StripePaymentProvider
 # reach live Stripe; it stashes the real value here for this module alone.
 from tests.conftest import STRIPE_TEST_KEY as SECRET_KEY  # noqa: E402
 
+# The reconciliation tests at the bottom build their journal rows with the same
+# rig the offline suite uses, so the two suites cannot disagree about what a
+# `pending` row looks like.
+from tests import reconcile_helpers  # noqa: E402
+
 CONNECTED_ACCOUNT = os.environ.get("TOOLBELT_STRIPE_TEST_ACCOUNT", "")
 
 pytestmark = [
@@ -455,6 +460,250 @@ def test_reverse_transfer_claws_back_and_replays_idempotently(provider):
     assert replay_ref == reversal_ref, "same key must return the original reversal"
     transfer = provider._client.transfers.retrieve(transfer_ref)
     assert transfer.amount_reversed == 40, "replay must not reverse a second time"
+
+
+# --------------------------------------------------------------------------
+# Reconciliation against the real API
+# --------------------------------------------------------------------------
+#
+# The offline suite proves every branch of the sweeper against
+# FakePaymentProvider. These prove the half that matters most and that a fake
+# cannot: that a `pending` journal row resolves correctly when the thing being
+# asked is Stripe itself. Both directions are here on purpose — a reconciler
+# that can only recognise success is a reconciler that cannot tell "nothing
+# happened" from "I cannot tell", which is its entire job.
+
+
+def _local_payment(client, real_auth_ref: str, real_charge_ref: str | None):
+    """A real Payment row wired to real Stripe objects.
+
+    The rows go through the normal flow (so foreign keys, the job, and both
+    users are genuine) and then have their provider references swapped for the
+    ones created above against test-mode Stripe. That is exactly the state the
+    sweeper meets in production: local bookkeeping on one side, Stripe on the
+    other, and a journal row that never learned how the call ended.
+    """
+    from sqlalchemy import select
+
+    from app.core.db import SessionLocal
+    from app.modules.payments.models import Payment
+
+    job, _customer, worker = reconcile_helpers.accepted_job(client)
+    with SessionLocal() as db:
+        payment = db.scalar(select(Payment).where(Payment.job_id == job["id"]))
+        payment.provider_auth_ref = real_auth_ref
+        payment.provider_charge_ref = real_charge_ref
+        db.commit()
+        db.refresh(payment)
+        return payment
+
+
+@pytest.fixture()
+def stripe_reconcile(provider, monkeypatch):
+    """Point the sweeper at real Stripe.
+
+    conftest blanks the secret key so the domain suite can never reach live
+    Stripe, which means get_payment_provider() returns the fake. Overriding it
+    here is what makes these tests exercise the real read path.
+    """
+    from app.modules.payments import reconcile
+
+    monkeypatch.setattr(reconcile, "get_payment_provider", lambda: provider)
+    return reconcile
+
+
+def test_reconciling_a_pending_capture_against_stripe_finds_the_real_charge(
+    client, provider, customer, stripe_reconcile
+):
+    """The crash between the call and the completion write, resolved by Stripe.
+
+    A real $1.00 authorize + capture happens, the local journal row is left the
+    way a crash leaves it, and the sweep has to come back with the charge id
+    Stripe actually created — not a guess, and not a replay.
+    """
+    customer_ref, pm_ref = customer
+    auth_ref = provider.authorize(
+        100, "usd", customer_ref, pm_ref, {"job_id": "itest-reconcile-capture"},
+        idempotency_key=_key("authorize"),
+    )
+    charge_ref = provider.capture(auth_ref, idempotency_key=_key("capture"))
+
+    payment = _local_payment(client, auth_ref, None)
+    key = f"capture-call:{payment.id}"
+    reconcile_helpers.pending(key, "capture", payment.id, {"auth_ref": auth_ref})
+
+    outcome = reconcile_helpers.only(reconcile_helpers.sweep())
+
+    assert outcome.resolution is stripe_reconcile.Resolution.SUCCEEDED
+    assert outcome.provider_ref == charge_ref, (
+        "the sweeper must record the charge Stripe actually created, because the "
+        "journal replays that reference to the refund path without asking again"
+    )
+    assert reconcile_helpers.journal_row(key).provider_ref == charge_ref
+    # The local payment still says AUTHORIZED with no charge reference, so this
+    # is a genuine books-vs-Stripe disagreement and must be escalated, not fixed.
+    assert outcome.discrepancy is not None
+    assert "MONEY TAKEN, NOT RECORDED" in outcome.discrepancy
+
+
+def test_reconciling_a_capture_that_never_happened_against_stripe_says_so(
+    client, provider, customer, stripe_reconcile
+):
+    """The other verdict, and the one that is easy to get wrong.
+
+    The authorization is a real, live, uncaptured hold at Stripe. That is
+    positive evidence the capture never landed — the answer must be `failed`,
+    not `unknown` and certainly not `succeeded`.
+    """
+    customer_ref, pm_ref = customer
+    auth_ref = provider.authorize(
+        100, "usd", customer_ref, pm_ref, {"job_id": "itest-reconcile-nocapture"},
+        idempotency_key=_key("authorize"),
+    )
+    try:
+        payment = _local_payment(client, auth_ref, None)
+        key = f"capture-call:{payment.id}"
+        reconcile_helpers.pending(key, "capture", payment.id, {"auth_ref": auth_ref})
+
+        outcome = reconcile_helpers.only(reconcile_helpers.sweep())
+
+        assert outcome.resolution is stripe_reconcile.Resolution.FAILED
+        assert outcome.provider_ref is None
+        assert "uncaptured hold" in outcome.detail
+        assert provider._client.payment_intents.retrieve(auth_ref).amount_received == 0, (
+            "the sweeper must not have captured anything while looking"
+        )
+    finally:
+        provider.release(auth_ref, idempotency_key=_key("release"))
+
+
+def test_reconciling_a_pending_refund_against_stripe_finds_the_real_refund(
+    client, provider, customer, stripe_reconcile
+):
+    """Identification by fingerprint, proved against Stripe's own refund list.
+
+    Nothing local records which refund object this call produced — that write is
+    the one that was lost. The refund is picked out of the charge's refunds by
+    rebuilding the call's parameters from each candidate and matching the hash
+    the journal wrote before dialling out.
+    """
+    customer_ref, pm_ref = customer
+    auth_ref = provider.authorize(
+        400, "usd", customer_ref, pm_ref, {"job_id": "itest-reconcile-refund"},
+        idempotency_key=_key("authorize"),
+    )
+    charge_ref = provider.capture(auth_ref, idempotency_key=_key("capture"))
+    refund_ref = provider.refund(charge_ref, 250, idempotency_key=_key("refund"))
+
+    payment = _local_payment(client, auth_ref, charge_ref)
+    key = f"refund-call:{payment.id}:0"
+    reconcile_helpers.pending(
+        key, "refund", payment.id, {"charge": charge_ref, "amount": 250}
+    )
+
+    outcome = reconcile_helpers.only(reconcile_helpers.sweep())
+
+    assert outcome.resolution is stripe_reconcile.Resolution.SUCCEEDED
+    assert outcome.provider_ref == refund_ref
+    assert provider._client.charges.retrieve(charge_ref).amount_refunded == 250, (
+        "reconciliation is a read: the customer must not have been refunded twice"
+    )
+
+
+@pytest.mark.skipif(
+    not CONNECTED_ACCOUNT,
+    reason=(
+        "TOOLBELT_STRIPE_TEST_ACCOUNT not set — needs a connected account that has "
+        "completed Express onboarding, which cannot be automated from a test"
+    ),
+)
+def test_reconciling_a_pending_payout_against_stripe_finds_the_real_transfer(
+    client, provider, stripe_reconcile
+):
+    """A payout is identified by metadata, so this is where reading Stripe's
+    objects the wrong way stays invisible offline.
+
+    A fake hands back a plain dict for metadata; Stripe hands back a StripeObject
+    with no `.get`. Only a test that reads a real transfer catches that, and it
+    is the difference between "the worker was paid" and an exception at 3am.
+    """
+    import time
+
+    from sqlalchemy import select, update
+
+    from app.core.db import SessionLocal
+    from app.modules.payments.models import (
+        LedgerEntry,
+        Payment,
+        PaymentStatus,
+        PayoutAccount,
+        ProviderCall,
+    )
+
+    # 100 cents at the 15% take-rate leaves the worker 85 — the amount the other
+    # Connect tests move, and small enough to be free in test mode.
+    job, _customer, worker = reconcile_helpers.accepted_job(client, price_cents=100)
+    reconcile_helpers.complete_job(client, job, worker)
+    payment = reconcile_helpers.payment_for(job["id"])
+    assert payment.status is PaymentStatus.CAPTURED, "the worker is not onboarded yet"
+    worker_id, worker_net, currency = (
+        payment.worker_id, payment.worker_net_cents, payment.currency
+    )
+
+    # The payment is renumbered to something unique before its id is stamped into
+    # Stripe metadata. The suite starts from an empty database every run, so
+    # every run would otherwise claim payment id 1 — and the test-mode connected
+    # account is shared and keeps every transfer forever. The second run would
+    # then find two transfers carrying payment_id=1 and correctly report a DOUBLE
+    # PAYOUT that only exists because the test collided with its own history.
+    payment_id = int(time.time()) % 2_000_000_000
+    with SessionLocal() as db:
+        db.execute(
+            update(LedgerEntry).where(LedgerEntry.payment_id == payment.id)
+            .values(payment_id=payment_id)
+        )
+        db.execute(
+            update(ProviderCall).where(ProviderCall.payment_id == payment.id)
+            .values(payment_id=payment_id)
+        )
+        db.execute(update(Payment).where(Payment.id == payment.id).values(id=payment_id))
+        db.add(
+            PayoutAccount(
+                user_id=worker_id,
+                provider_account_ref=CONNECTED_ACCOUNT,
+                payouts_enabled=True,
+            )
+        )
+        db.commit()
+
+    transfer_ref = provider.transfer(
+        CONNECTED_ACCOUNT, worker_net, "usd",
+        {"payment_id": str(payment_id)},
+        idempotency_key=_key("reconcile-payout"),
+    )
+    key = f"payout:{payment_id}#0"
+    reconcile_helpers.pending(
+        key,
+        "transfer",
+        payment_id,
+        {
+            "destination": CONNECTED_ACCOUNT,
+            "amount": worker_net,
+            "currency": currency,
+        },
+    )
+
+    outcome = reconcile_helpers.only(reconcile_helpers.sweep())
+
+    assert outcome.resolution is stripe_reconcile.Resolution.SUCCEEDED
+    assert outcome.provider_ref == transfer_ref
+    # The payment still reads CAPTURED with no payout reference, so the worker
+    # has money we have no record of sending. Escalated, never repaired.
+    assert "WORKER PAID, NOT RECORDED" in (outcome.discrepancy or "")
+    with SessionLocal() as db:
+        after = db.scalar(select(Payment).where(Payment.id == payment_id))
+        assert after.status is PaymentStatus.CAPTURED
+        assert after.provider_payout_ref is None
 
 
 def test_capture_tolerates_an_already_captured_intent(provider, customer):

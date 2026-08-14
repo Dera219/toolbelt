@@ -153,6 +153,40 @@ Every transition writes an immutable `job_events` audit row (who, what, when, fr
   that comes back with different parameters is refused rather than sent. Provider keys
   alone are not enough: Stripe prunes them after 24 hours and then treats a reuse as a
   new request, so the local record is what makes a next-morning repair safe.
+- **Reconciliation sweeper** (`payments/reconcile.py`) — what closes the journal's one
+  admitted gap. A crash between the provider call and the completion write leaves a row
+  `pending`, and the journal is honest that this means "outcome unknown"; until the
+  sweeper existed, nothing ever asked the provider, so `pending` meant unknown
+  *permanently*. Its job is to tell **"nothing happened"** apart from **"I cannot
+  tell"** — the same word in the journal, and completely different operationally: one is
+  a job that silently never got paid, the other is money sitting somewhere nobody is
+  looking. Three verdicts, and `unknown` is a real answer rather than a failure.
+  - **Read-only, never a replay.** The shortcut — re-issue the request under its
+    original idempotency key, which inside Stripe's 24-hour window returns the original
+    object — has a hole the size of the problem: a replay returns the original object
+    only *if the key was consumed*, and whether it was consumed is exactly the question.
+    If the request never reached Stripe, the replay creates a brand new charge — the
+    sweeper causing the movement it was sent to investigate, in precisely the case it
+    exists to detect. So one path, both windows, all reads.
+  - **Attribution by fingerprint.** For refunds, transfers, reversals and authorizes
+    the object was created by the call whose reference we lost, so it is identified by
+    content: candidates are pulled from the provider, the call parameters are rebuilt
+    from each, and the one hashing to the `request_fingerprint` written *before* the
+    call is ours. Already-claimed references are excluded first, since two refunds of
+    the same amount on the same charge fingerprint identically. Exactly one match
+    resolves; zero means it never landed; more than one is the double-spend itself and
+    is reported, not resolved.
+  - **Knowledge gap, never money gap.** It may relabel a journal row and record the true
+    reference. It never refunds, transfers, captures or reverses, never edits a Payment,
+    never writes a ledger entry. Disagreements between the provider and our books are
+    reported as discrepancies for a human. Enforced structurally: the provider is
+    wrapped in a read-only guard that raises on any money method. A sweeper that
+    silently repairs money state is a second class of bug wearing the costume of a fix.
+  - Runs from `api/scripts/reconcile_provider_calls.py` (dry-run by default) and from
+    `POST /admin/payments/reconcile`, both through the same service function so the
+    scheduled run and the by-hand run cannot drift. **No scheduler in-process** — a
+    background thread in a free-tier web service is a new failure mode, not a feature.
+    Operating instructions and how to read each outcome: DEPLOY.md.
 - Cash-market countries (later): "record cash payment, collect fee from worker
   balance" mode — this is how Uber cracked cash markets.
 

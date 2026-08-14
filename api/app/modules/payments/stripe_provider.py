@@ -18,6 +18,8 @@ Selected by get_payment_provider() when TOOLBELT_STRIPE_SECRET_KEY is set. Exerc
 against Stripe test mode; the test suite covers the domain via FakePaymentProvider.
 """
 
+from datetime import datetime
+
 import stripe
 
 from app.core.config import get_settings
@@ -25,7 +27,52 @@ from app.core.config import get_settings
 # Pinned by @stripe/stripe-react-native; the ephemeral key it receives must
 # be issued for the same API version or the sheet refuses to load.
 MOBILE_SDK_API_VERSION = "2024-06-20"
-from app.modules.payments.provider import ProviderError
+from app.modules.payments.provider import (
+    AuthorizationRecord,
+    AuthorizationState,
+    ProviderError,
+    RefundRecord,
+    ReversalRecord,
+    TransferRecord,
+)
+
+# How many objects a single reconciliation read will pull back. Stripe's list
+# endpoints cap at 100 per page and the sweeper deliberately does not paginate:
+# a customer with more than 100 authorizations inside the lookback window, or a
+# charge with more than 100 refunds, is not a case to silently half-answer. The
+# sweeper reports "cannot tell" instead — see `_page_is_complete` callers.
+LOOKUP_PAGE_SIZE = 100
+
+# Stripe PaymentIntent status → what the sweeper needs to know. Anything absent
+# from this map is IN_FLIGHT: the provider has not finished deciding, so a
+# reconciler that ruled either way would be guessing.
+_INTENT_STATE = {
+    "requires_capture": AuthorizationState.HELD,
+    "succeeded": AuthorizationState.CAPTURED,
+    "canceled": AuthorizationState.CANCELLED,
+    # No hold was ever placed: the card was declined or confirmation never
+    # completed. Money did not move and never will under this object.
+    "requires_payment_method": AuthorizationState.NO_HOLD,
+    "requires_confirmation": AuthorizationState.NO_HOLD,
+}
+
+
+def _metadata(obj) -> dict:
+    """An object's metadata as a plain dict.
+
+    `intent.metadata` is a StripeObject, not a dict. It has no `.get`, and
+    `dict(...)` on it raises KeyError. Calling `.get` on it is the obvious
+    mistake and it is invisible offline — every fake hands back a real dict — so
+    it survives the whole unit suite and blows up the first time reconciliation
+    runs against production. Normalizing once, here, is what keeps the reads
+    honest.
+    """
+    metadata = getattr(obj, "metadata", None)
+    if metadata is None:
+        return {}
+    if isinstance(metadata, dict):
+        return metadata
+    return metadata.to_dict()
 
 
 def _provider_error(exc: stripe.StripeError) -> ProviderError:
@@ -407,3 +454,155 @@ class StripePaymentProvider:
         except stripe.StripeError as exc:
             raise _provider_error(exc) from exc
         return reversal.id
+
+    # ------------------------------------------------------------ reconciliation reads
+    #
+    # Everything below is a GET. Not one of these can create an object, which is
+    # the property that makes them usable on a journal row whose outcome is
+    # unknown. The alternative — replaying the original request under its
+    # idempotency key — is a mutation whose result depends on whether Stripe
+    # ever received the first attempt: inside the 24-hour key window a replay
+    # returns the original object *if the key was consumed*, and creates a brand
+    # new charge if it was not. "Was it consumed?" is exactly the question the
+    # sweeper is trying to answer, so the replay cannot be part of answering it.
+
+    @staticmethod
+    def _authorization(intent) -> AuthorizationRecord:
+        return AuthorizationRecord(
+            ref=intent.id,
+            state=_INTENT_STATE.get(intent.status, AuthorizationState.IN_FLIGHT),
+            amount_cents=intent.amount,
+            currency=intent.currency,
+            customer_ref=intent.customer,
+            payment_method_ref=intent.payment_method,
+            charge_ref=intent.latest_charge,
+            job_id=_metadata(intent).get("job_id"),
+        )
+
+    def lookup_authorization(self, auth_ref: str) -> AuthorizationRecord | None:
+        """Retrieve one PaymentIntent. None when Stripe has no such object.
+
+        A missing intent is answered as None rather than raised, because "there
+        is nothing here" is a real finding for the sweeper: it is the difference
+        between a capture that never went out and a capture whose outcome we
+        cannot see.
+        """
+        try:
+            intent = self._client.v1.payment_intents.retrieve(auth_ref)
+        except stripe.InvalidRequestError:
+            return None
+        except stripe.StripeError as exc:
+            raise _provider_error(exc) from exc
+        return self._authorization(intent)
+
+    def lookup_authorizations_for_customer(
+        self, customer_ref: str, *, since: datetime
+    ) -> list[AuthorizationRecord]:
+        """Authorizations created for a customer since `since`.
+
+        `list` rather than `search`: Stripe's Search API is eventually
+        consistent ("Occasionally, propagation of new or updated data can be up
+        to a minute behind"), and an index that has not caught up would report
+        an authorization as absent — which the sweeper would read as "nothing
+        moved" over a real hold on a customer's card. List reads are
+        strongly consistent, so a miss here means a genuine miss.
+        """
+        try:
+            page = self._client.v1.payment_intents.list(
+                params={
+                    "customer": customer_ref,
+                    "created": {"gte": int(since.timestamp())},
+                    "limit": LOOKUP_PAGE_SIZE,
+                }
+            )
+        except stripe.StripeError as exc:
+            raise _provider_error(exc) from exc
+        if page.has_more:
+            # Refusing to answer beats answering from a truncated page: the
+            # sweeper's "failed" verdict means "nothing exists", and a page that
+            # stopped early cannot support that claim.
+            raise ProviderError(
+                f"customer {customer_ref} has more than {LOOKUP_PAGE_SIZE} authorizations "
+                "in the reconciliation window; refusing to judge from a partial page",
+                definitive=True,
+            )
+        return [self._authorization(intent) for intent in page.data]
+
+    def lookup_refunds(self, charge_ref: str) -> list[RefundRecord]:
+        try:
+            page = self._client.v1.refunds.list(
+                params={"charge": charge_ref, "limit": LOOKUP_PAGE_SIZE}
+            )
+        except stripe.StripeError as exc:
+            raise _provider_error(exc) from exc
+        if page.has_more:
+            raise ProviderError(
+                f"charge {charge_ref} has more than {LOOKUP_PAGE_SIZE} refunds; refusing "
+                "to judge from a partial page",
+                definitive=True,
+            )
+        return [
+            RefundRecord(
+                ref=refund.id,
+                charge_ref=charge_ref,
+                amount_cents=refund.amount,
+                # A refund Stripe later failed or cancelled put the money back
+                # on our side. Counting it as money returned to the customer
+                # would tell an operator a refund landed when it did not.
+                settled=refund.status not in ("failed", "canceled"),
+            )
+            for refund in page.data
+        ]
+
+    def lookup_transfers_to(
+        self, account_ref: str, *, since: datetime
+    ) -> list[TransferRecord]:
+        try:
+            page = self._client.transfers.list(
+                params={
+                    "destination": account_ref,
+                    "created": {"gte": int(since.timestamp())},
+                    "limit": LOOKUP_PAGE_SIZE,
+                }
+            )
+        except stripe.StripeError as exc:
+            raise _provider_error(exc) from exc
+        if page.has_more:
+            raise ProviderError(
+                f"account {account_ref} received more than {LOOKUP_PAGE_SIZE} transfers in "
+                "the reconciliation window; refusing to judge from a partial page",
+                definitive=True,
+            )
+        return [
+            TransferRecord(
+                ref=transfer.id,
+                account_ref=account_ref,
+                amount_cents=transfer.amount,
+                currency=transfer.currency,
+                payment_id=_metadata(transfer).get("payment_id"),
+            )
+            for transfer in page.data
+        ]
+
+    def lookup_transfer_reversals(self, transfer_ref: str) -> list[ReversalRecord]:
+        try:
+            page = self._client.transfers.reversals.list(
+                transfer_ref, params={"limit": LOOKUP_PAGE_SIZE}
+            )
+        except stripe.InvalidRequestError:
+            # The transfer itself does not exist, so neither do its reversals.
+            return []
+        except stripe.StripeError as exc:
+            raise _provider_error(exc) from exc
+        if page.has_more:
+            raise ProviderError(
+                f"transfer {transfer_ref} has more than {LOOKUP_PAGE_SIZE} reversals; "
+                "refusing to judge from a partial page",
+                definitive=True,
+            )
+        return [
+            ReversalRecord(
+                ref=reversal.id, transfer_ref=transfer_ref, amount_cents=reversal.amount
+            )
+            for reversal in page.data
+        ]

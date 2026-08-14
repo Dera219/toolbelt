@@ -12,7 +12,7 @@ from app.core.db import get_db
 from app.core.security import get_current_user, require_admin
 from app.modules.identity.models import User
 from app.modules.jobs.models import Job
-from app.modules.payments import ledger, service
+from app.modules.payments import ledger, reconcile, service
 from app.modules.payments.models import PayoutAccount, WebhookEvent
 from app.modules.payments.schemas import (
     BalanceOut,
@@ -25,6 +25,9 @@ from app.modules.payments.schemas import (
     PaymentOut,
     PayoutAccountCreatedOut,
     PayoutAccountOut,
+    ReconcileIn,
+    ReconcileOutcomeOut,
+    ReconcileReportOut,
     RefundIn,
     TrialBalanceOut,
 )
@@ -247,3 +250,54 @@ def refund_payment(
 def ledger_trial_balance(db: DbDep, _admin: Annotated[User, Depends(require_admin)]):
     total = ledger.trial_balance(db)
     return TrialBalanceOut(total_cents=total, balanced=total == 0)
+
+
+@router.post("/admin/payments/reconcile", response_model=ReconcileReportOut)
+def reconcile_provider_calls(
+    db: DbDep,
+    _admin: Annotated[User, Depends(require_admin)],
+    body: ReconcileIn | None = None,
+):
+    """Resolve `pending` provider-call journal rows against the provider.
+
+    POST rather than GET because it can write, even though everything it asks the
+    provider is a read. Admin-only for the same reason the refund route is: the
+    response names payments, connected accounts and provider references, and it
+    is the operator's view of where money may be sitting.
+
+    The identical work runs from `scripts/reconcile_provider_calls.py`, through
+    this same service function, so the scheduled run and the by-hand run cannot
+    drift into disagreeing about what a `pending` row means.
+
+    This endpoint never moves money — see app/modules/payments/reconcile.py.
+    """
+    body = body or ReconcileIn()
+    report = reconcile.reconcile_pending_calls(
+        db,
+        dry_run=body.dry_run,
+        older_than_minutes=body.older_than_minutes,
+        limit=body.limit,
+    )
+    return ReconcileReportOut(
+        dry_run=report.dry_run,
+        grace_minutes=report.grace_minutes,
+        scanned=report.scanned,
+        succeeded=report.count(reconcile.Resolution.SUCCEEDED),
+        failed=report.count(reconcile.Resolution.FAILED),
+        unknown=report.count(reconcile.Resolution.UNKNOWN),
+        in_grace_period=report.in_grace_period,
+        discrepancy_count=len(report.discrepancies),
+        outcomes=[
+            ReconcileOutcomeOut(
+                key=o.key,
+                operation=o.operation,
+                payment_id=o.payment_id,
+                resolution=o.resolution.value,
+                provider_ref=o.provider_ref,
+                detail=o.detail,
+                discrepancy=o.discrepancy,
+                written=o.written,
+            )
+            for o in report.outcomes
+        ],
+    )

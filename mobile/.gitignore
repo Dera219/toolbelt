@@ -18,6 +18,13 @@ expo-env.d.ts
 *.key
 *.mobileprovision
 
+# Firebase. google-services.json holds only public identifiers and IS committed —
+# the Android build needs it. The service account key is a private key that can
+# send push as you, and must never be: it is uploaded to EAS once and then only
+# ever lives outside the repo.
+google-service-account*.json
+*-firebase-adminsdk-*.json
+
 # Metro
 .metro-health-check*
 

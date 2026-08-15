@@ -18,6 +18,7 @@
     },
     "android": {
       "package": "com.toolbelt.mobile",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -55,6 +56,12 @@
           "enableGooglePay": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "02bf4d9d-8a4c-497b-8cdd-f030648bbb6a"
+      }
+    },
+    "owner": "219dera"
   }
 }

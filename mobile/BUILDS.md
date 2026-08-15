@@ -3,87 +3,193 @@
 ## The constraint that decides everything here
 
 **Remote push notifications do not work in Expo Go.** Support was removed in
-SDK 53, and this project is on SDK 57. Scanning the QR code with Expo Go still
-runs the app — but a device registered that way will never receive a job alert,
-and `registerForPush()` returns null.
+SDK 53, and this project is on SDK 57 — the SDK 57 docs still say it plainly:
+push "is unavailable in Expo Go on Android from SDK 53. A development build is
+required." Scanning the QR code with Expo Go runs the app fine, but a device
+registered that way will never receive a job alert and `registerForPush()`
+returns null.
 
-Testing push therefore requires a **development build**, which is a real app
-binary containing the native notification module.
+Testing push therefore requires a **real binary** containing the native
+notification module.
 
 | Target | Cost | Gets you |
 |---|---|---|
 | Expo Go | free | The app, no push. Fine for UI and flow work. |
-| Android dev build | **free** | Real push, installable APK, no store account |
-| iOS dev build / TestFlight | **$99/yr** Apple Developer | Real push on iPhone, TestFlight distribution |
+| Android build | **free** | Real push, installable APK, no store account |
+| iOS build / TestFlight | **$99/yr** Apple Developer | Real push on iPhone, TestFlight distribution |
 
-**Android first is the cheap path.** It costs nothing, tests the entire push
+**Android first is the cheap path.** It costs nothing, exercises the entire push
 system end to end, and needs no Apple relationship. Do that before spending $99.
 
-## Before the first build — check the bundle identifier
+## Two traps that make push look broken when it is not
 
-`app.json` sets both to `com.toolbelt.mobile`. **Change it now if you want
-something else**: after an app is published, the identifier is effectively
-permanent — changing it means a new listing that existing users must reinstall.
+Read these before you build. Each one produces silence rather than an error,
+and each one has cost someone an afternoon.
 
-If you buy a domain, reverse it: owning `toolbelt.build` would make
-`build.toolbelt.mobile` the conventional choice.
+### 1. A local API never sends a push. It only logs one.
 
-## Android development build (free, ~15 minutes)
+`api/app/modules/notifications/push.py` picks the sender by environment:
 
-```bash
-npm install -g eas-cli
-eas login                  # free Expo account; interactive
-eas build:configure        # links the project, writes the EAS project id
-eas build --profile development --platform android
+```python
+def get_push_sender() -> PushSender:
+    settings = get_settings()
+    if settings.environment == "prod":
+        return ExpoPushSender()
+    return _dev_sender          # DevPushSender: appends to an outbox, logs, returns
 ```
 
-EAS builds in the cloud and returns an install URL. Open it on an Android phone,
-install, then:
+`TOOLBELT_ENVIRONMENT` is `prod` **only on Render** (`render.yaml`). On your
+laptop it is `dev`, so every notification the API decides to send is written to
+a log line and dropped. The phone is not at fault and neither is FCM.
+
+**Consequence: point the build at `https://api.toolbelt.biz`.** That is the only
+deployment that actually calls Expo's push service. Testing push against
+localhost cannot succeed, however correct everything else is.
+
+### 2. Android push needs FCM credentials that EAS will not create for you
+
+EAS generates an Android keystore on its own. It does **not** generate Firebase
+credentials — you supply those from your own Firebase project, and without them
+Android push fails. There are two separate artifacts and they are not equally
+secret:
+
+| Artifact | What it is | Where it goes | Committed? |
+|---|---|---|---|
+| `google-services.json` | Public identifiers (sender id, app id) | `mobile/google-services.json`, referenced by `android.googleServicesFile` | **Yes** — no secrets in it, and the build needs it |
+| Service account key JSON | A **private key** that can send push as you | Uploaded to EAS once, then kept out of the repo | **Never** — `.gitignore` already blocks the usual filenames |
+
+Both must come from the *same* Firebase project. A mismatched pair is what
+produces `MismatchSenderId` on send, with a perfectly healthy-looking token on
+the device.
+
+## Step 1 — Expo account and login (you, interactively)
 
 ```bash
+npx eas-cli login
+```
+
+Free account; create one at expo.dev first if you do not have one. The session
+is stored in `~/.expo`, so everything after this is non-interactive.
+
+## Step 2 — Firebase (you, in a browser)
+
+1. Firebase console → create a project (or reuse one). Analytics is optional
+   and irrelevant here.
+2. Add an **Android** app. The package name must be exactly
+   **`com.toolbelt.mobile`** — it is what `app.json` declares, and a mismatch
+   breaks delivery silently.
+3. Download `google-services.json` → save it to `mobile/google-services.json`.
+4. Project settings → **Service accounts** → *Generate new private key*. Save
+   the JSON outside the repo (`~/Downloads` is fine); it is a credential.
+
+## Step 3 — Wire it up
+
+Add the file reference to `app.json` under `android` — this is what enables FCM
+in the build:
+
+```json
+"android": {
+  "package": "com.toolbelt.mobile",
+  "googleServicesFile": "./google-services.json",
+  ...
+}
+```
+
+Link the EAS project (writes `extra.eas.projectId`, which `src/push.ts` reads
+when it asks for a token), then upload the service account key:
+
+```bash
+npx eas-cli init
+npx eas-cli credentials
+```
+
+In `credentials`: **Android → production → Google Service Account → Manage your
+Google Service Account Key for Push Notifications (FCM V1) → upload**, and point
+it at the file from step 2.4. The key is per-project, so one upload covers every
+build profile.
+
+## Step 4 — Build the APK
+
+```bash
+npx eas-cli build --profile preview --platform android
+```
+
+**Use `preview`, not `development`, for testing push.** The difference matters:
+
+- `preview` — a standalone APK with the JS bundled in and
+  `EXPO_PUBLIC_API_URL=https://api.toolbelt.biz` baked at build time. Install it
+  and it works on its own: no laptop, no Metro, no shared wifi, and it talks to
+  the one API that really sends push.
+- `development` — `developmentClient: true`, so the app loads its JS from Metro
+  on your machine at runtime. Right for iterating on code, wrong for a push
+  test: the API URL comes from your local environment rather than from
+  `eas.json`, and the obvious local choice is the API that cannot send.
+
+EAS builds in the cloud and returns an install URL. Open it on the Android phone
+and install; you will have to allow installs from that browser.
+
+Budget the time honestly: the free plan allows **15 Android builds a month** and
+puts them in the **low-priority queue**, where peak-hour waits reach 90+ minutes
+before the build itself starts. The build is ~15 minutes; the queue is not. Free
+plan builds also time out at 45 minutes.
+
+For the development build later, when you do want the fast edit loop:
+
+```bash
+npx eas-cli build --profile development --platform android
 npx expo start --dev-client
 ```
 
-Now push works: post a job from another account and the device gets an alert.
+Its API URL resolves through `src/config.ts`, which already derives your
+machine's LAN address from the Metro host — that is why the `development`
+profile deliberately sets no `EXPO_PUBLIC_API_URL`. Override it explicitly if
+you want that build against production:
+
+```bash
+EXPO_PUBLIC_API_URL=https://api.toolbelt.biz npx expo start --dev-client
+```
+
+## Verifying push actually works
+
+The live API is on Render's free tier and **spins down when idle — the first
+request can take 50+ seconds.** Hit https://api.toolbelt.biz/health once and
+wait for it before deciding anything is broken.
+
+1. Sign up / log in on the phone. `registerForPush()` runs on login, asks for
+   permission, and POSTs the token to `/me/device-tokens`.
+2. Make that account a **worker**, set its trade and service area, and set its
+   `vetting_status` to `verified` — an unverified worker is targeted by nothing.
+3. From a second account (the web client at https://app.toolbelt.biz is the
+   easiest way), post a job in the same trade, inside that worker's radius.
+4. The phone should show "New cleaning job nearby".
+
+If nothing arrives, check in this order — these are exactly the filters
+`notify_job_posted` applies, and any one of them silently drops the send:
+
+- the token row exists for that user
+- `WorkerProfile.vetting_status == VERIFIED`
+- `WorkerProfile.is_available` is true
+- the job's `trade` equals the profile's `trade`
+- the job is within that worker's `service_radius_km` (not the platform default)
+- the poster is not the worker (`User.id != job.customer_id`)
+
+Then check the API logs on Render. `ExpoPushSender` logs every rejection Expo
+reports, with the error code: `DeviceNotRegistered` means a stale token,
+`MismatchSenderId` means the FCM pair from step 2 disagree.
+
+## Before the first *store* release — the bundle identifier
+
+`app.json` sets both platforms to `com.toolbelt.mobile`. Internal builds can
+change it freely; after a store listing exists it is effectively permanent, and
+changing it means a new listing that existing users must reinstall.
 
 ## iOS / TestFlight (needs the $99 account)
 
 ```bash
-eas build --profile production --platform ios
-eas submit --platform ios
+npx eas-cli build --profile production --platform ios
+npx eas-cli submit --platform ios
 ```
 
-EAS handles the push certificate and provisioning profiles itself once your
-Apple Developer credentials are attached. Expect the first Apple review of a
-TestFlight build to take a day or two.
-
-## Fix the API URLs before a real build
-
-`eas.json` has placeholder hosts in the `preview` and `production` profiles:
-
-```
-"EXPO_PUBLIC_API_URL": "https://staging.example.com"
-"EXPO_PUBLIC_API_URL": "https://api.example.com"
-```
-
-The API is not deployed anywhere yet. A build made now would ship pointing at a
-domain that does not exist. The `development` profile points at `localhost`,
-which is correct for a simulator but wrong for a physical device — override with
-your machine's LAN IP, or use the tunnel described in `src/config.ts`.
-
-**Deploying the API is the real prerequisite for a pilot**, not the build. A
-TestFlight app talking to a laptop that sleeps is not a pilot.
-
-## Verifying push actually works
-
-Once a dev build is on a device:
-
-1. Log in — `registerForPush()` runs and posts the token to `/me/device-tokens`
-2. Confirm it landed: `sqlite3 toolbelt.db "select user_id, platform from device_tokens;"`
-3. From a second account, post a job matching that worker's trade and area
-4. The device should show "New cleaning job nearby"
-
-If nothing arrives, check in this order: the token row exists; the worker's
-`vetting_status` is `verified`; the job's trade matches the profile's `trade`;
-and the job is within the worker's `service_radius_km`. Those four filters are
-what `notify_job_posted` applies, and any one of them silently drops the send.
+EAS handles the APNs key and provisioning profiles itself once your Apple
+Developer credentials are attached — iOS needs no Firebase. Expect the first
+Apple review of a TestFlight build to take a day or two.

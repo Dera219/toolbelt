@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "797302806255",
+    "project_id": "toolbelt-7bf4f",
+    "storage_bucket": "toolbelt-7bf4f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:797302806255:android:f701cb8dd53d5560676d1a",
+        "android_client_info": {
+          "package_name": "com.toolbelt.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBc4lrqlZoItNiNzzQ1-L9EevnyupdcpIY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

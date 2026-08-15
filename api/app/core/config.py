@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     # Public origin, used to build URLs a third party redirects back to
     # (currently Stripe Connect onboarding return/refresh).
     public_base_url: str = "http://localhost:8000"
+    # Browser origins allowed to call this API cross-origin, comma separated
+    # (e.g. "https://app.toolbelt.biz"). Only consulted in prod — dev allows
+    # localhost by regex so `expo start --web` works without configuration.
+    #
+    # Empty is the safe default and means exactly what it says: no browser on
+    # another origin can reach this API, because without CORS headers the
+    # browser discards the response. That was the state until the web build
+    # existed. List origins explicitly and never wildcard — `allow_credentials`
+    # is on, and a wildcard with credentials is how a hostile page reads a
+    # logged-in user's data.
+    web_app_origins: str = ""
     # Payments
     # Country and currency used when provisioning a worker's Stripe Connect
     # account. Single-country for now; becomes per-worker at second-market.

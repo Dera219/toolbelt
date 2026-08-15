@@ -42,17 +42,42 @@ app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 if settings.environment != "prod":  # prod serves photos from S3/CDN, not the API
     from pathlib import Path
 
-    from fastapi.middleware.cors import CORSMiddleware
     from fastapi.staticfiles import StaticFiles
 
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
 
-    # Lets the app run in a browser (expo start --web) during development.
-    # Production origins are explicit; never wildcard once real accounts exist.
+# CORS, in both environments — because the web build is a real client now.
+#
+# It used to live inside the dev-only block above, which had a consequence
+# nobody had needed to face: in prod no CORS middleware was installed at all,
+# so a browser on any other origin discarded every response. That was correct
+# while the only client was a native app talking to the API directly, and it
+# silently forbade the browser client the moment one existed.
+#
+# Dev allows localhost by regex so `expo start --web` needs no configuration.
+# Prod allows exactly the origins named in TOOLBELT_WEB_APP_ORIGINS and nothing
+# else — never a wildcard, because `allow_credentials` is on and the two
+# together let any page read a signed-in user's data. Unset means no browser
+# client, which is the prior behaviour and a safe default rather than an
+# accident.
+_cors_origins = [o.strip() for o in settings.web_app_origins.split(",") if o.strip()]
+if settings.environment != "prod":
+    from fastapi.middleware.cors import CORSMiddleware
+
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+elif _cors_origins:
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -50,6 +50,15 @@ services:
       - key: TOOLBELT_PAYMENTS_WEBHOOK_SECRET
         sync: false
 
+      # Browser origins allowed to call this API cross-origin, comma separated.
+      # Set this ONLY when a web build is actually deployed, and name the exact
+      # origin (e.g. https://app.toolbelt.biz). Unset means no browser client,
+      # which is the safe default: without CORS headers a browser discards the
+      # response. Never a wildcard — allow_credentials is on, and the pair lets
+      # any page read a signed-in user's data.
+      - key: TOOLBELT_WEB_APP_ORIGINS
+        sync: false
+
       # Stripe endpoint signing secret (whsec_…) for POST /webhooks/stripe.
       # Set after registering the endpoint in Stripe → Developers → Webhooks
       # (event: account.updated). Unset = route answers 503 and payout state

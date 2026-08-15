@@ -45,3 +45,26 @@ def test_prod_still_rejects_the_dev_jwt_secret():
             public_base_url="https://api.example.com",
             payments_webhook_secret="f" * 64,
         )
+
+
+# --------------------------------------------------------------------------
+# Browser origins
+# --------------------------------------------------------------------------
+
+
+def test_web_app_origins_defaults_to_none():
+    """Unset means no browser client, which is the behaviour that held before
+    the web build existed. A permissive default would have quietly opened the
+    API to every origin the day someone deployed without reading this."""
+    settings = Settings(**_PROD_KWARGS, payments_webhook_secret="x" * 40)
+    assert settings.web_app_origins == ""
+
+
+def test_web_app_origins_parses_a_comma_separated_list():
+    settings = Settings(
+        **_PROD_KWARGS,
+        payments_webhook_secret="x" * 40,
+        web_app_origins="https://app.toolbelt.biz, https://staging.toolbelt.biz",
+    )
+    parsed = [o.strip() for o in settings.web_app_origins.split(",") if o.strip()]
+    assert parsed == ["https://app.toolbelt.biz", "https://staging.toolbelt.biz"]

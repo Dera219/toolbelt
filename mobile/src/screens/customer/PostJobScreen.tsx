@@ -1,11 +1,11 @@
 import { useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as ImagePicker from "expo-image-picker";
-import * as Location from "expo-location";
 import React, { useState } from "react";
 import { Image, Switch, View } from "react-native";
 import { ApiError, api } from "../../api/client";
 import { TRADES } from "../../config";
+import { resolveCoords } from "../../location";
 import type { RootStackParamList } from "../../navigation";
 import { colors, palette, radius, space, tradeMeta } from "../../theme";
 import {
@@ -54,9 +54,13 @@ export default function PostJobScreen() {
     setError(null);
     setBusy(true);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") throw new ApiError(0, "Location permission is required");
-      const pos = await Location.getCurrentPositionAsync({});
+      // The address is already required to post, so it doubles as the fallback
+      // when location access is off — no extra field, nothing more to ask for.
+      const { lat, lng } = await resolveCoords({
+        address,
+        unavailableMessage:
+          "We couldn't pin that address. Allow location access, or add more detail to the address — street, city and state.",
+      });
       const budgetCents = budget.trim() ? Math.round(parseFloat(budget) * 100) : null;
       if (budget.trim() && (!Number.isFinite(budgetCents) || (budgetCents as number) <= 0))
         throw new ApiError(0, "Budget must be a positive amount");
@@ -64,8 +68,8 @@ export default function PostJobScreen() {
         trade,
         title: title.trim(),
         description: description.trim(),
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
+        lat,
+        lng,
         address_text: address.trim(),
         budget_cents: budgetCents,
         customer_provides_supplies: supplies,

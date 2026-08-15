@@ -1,10 +1,10 @@
-import * as Location from "expo-location";
 import React, { useEffect, useState } from "react";
 import { Switch, View } from "react-native";
 import { ApiError, api } from "../../api/client";
 import type { WorkerProfile } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { TRADES } from "../../config";
+import { resolveCoords } from "../../location";
 import { colors, palette, space, tradeMeta } from "../../theme";
 import {
   Badge,
@@ -38,6 +38,7 @@ export default function WorkerProfileEditScreen() {
   const [bio, setBio] = useState("");
   const [rate, setRate] = useState("45.00");
   const [radius, setRadius] = useState("25");
+  const [baseAddress, setBaseAddress] = useState("");
   const [hasTools, setHasTools] = useState(true);
   const [hasVehicle, setHasVehicle] = useState(false);
   const [available, setAvailable] = useState(true);
@@ -85,23 +86,34 @@ export default function WorkerProfileEditScreen() {
       throw new ApiError(0, "Hourly rate must be a positive amount");
     if (!Number.isFinite(radiusKm) || radiusKm <= 0 || radiusKm > 100)
       throw new ApiError(0, "Service radius must be 1–100 km");
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== "granted") throw new ApiError(0, "Location permission is required");
-    const pos = await Location.getCurrentPositionAsync({});
+    // Keeping the existing base is the last resort: without it, a worker who
+    // only wanted to edit their rate would be blocked by a location prompt.
+    const { lat, lng, source } = await resolveCoords({
+      address: baseAddress,
+      saved: profile ? { lat: profile.base_lat, lng: profile.base_lng } : null,
+      unavailableMessage:
+        "Allow location access, or type the town or address you work out of so we know where to send jobs.",
+    });
     setProfile(
       await api.saveWorkerProfile({
         trade,
         bio: bio.trim(),
         hourly_rate_cents: rateCents,
-        base_lat: pos.coords.latitude,
-        base_lng: pos.coords.longitude,
+        base_lat: lat,
+        base_lng: lng,
         service_radius_km: radiusKm,
         is_available: available,
         has_own_tools: hasTools,
         has_vehicle: hasVehicle,
       })
     );
-    setNotice("Profile saved");
+    setNotice(
+      source === "gps"
+        ? "Profile saved"
+        : source === "address"
+          ? "Profile saved — base location set from the address you entered"
+          : "Profile saved — your existing base location was kept"
+    );
   });
 
   const sendCode = run(async () => {
@@ -228,6 +240,14 @@ export default function WorkerProfileEditScreen() {
             keyboardType="number-pad"
           />
           <Input
+            label="Base address"
+            hint="Only used if location access is off. Town and state is enough."
+            value={baseAddress}
+            onChangeText={setBaseAddress}
+            placeholder="College Park, MD"
+            autoCapitalize="words"
+          />
+          <Input
             label="Bio"
             hint="Customers read this before booking."
             value={bio}
@@ -266,7 +286,10 @@ export default function WorkerProfileEditScreen() {
       <ErrorText message={error} />
       <NoticeText message={notice} />
       <Button label="Save profile" icon="📍" onPress={save} loading={busy} />
-      <Caption>Saving updates your base location to where you are now.</Caption>
+      <Caption>
+        Saving sets your base location to where you are now — or to the base address above if
+        location access is off.
+      </Caption>
 
       {profile && user?.phone_verified && (status === "unverified" || status === "rejected") && (
         <Button label="Submit for vetting" variant="accent" onPress={submitVetting} loading={busy} />

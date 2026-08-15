@@ -1,10 +1,10 @@
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import * as Location from "expo-location";
 import React, { useCallback, useState } from "react";
 import { RefreshControl } from "react-native";
 import { ApiError, api } from "../../api/client";
 import type { NearbyJob, WorkerProfile } from "../../api/types";
+import { resolveCoords } from "../../location";
 import type { RootStackParamList } from "../../navigation";
 import {
   Badge,
@@ -12,6 +12,7 @@ import {
   Card,
   EmptyState,
   ErrorText,
+  NoticeText,
   Row,
   Screen,
   SectionHeader,
@@ -27,16 +28,24 @@ export default function NearbyJobsScreen() {
   const [profile, setProfile] = useState<WorkerProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [usingBaseLocation, setUsingBaseLocation] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
+    setUsingBaseLocation(false);
     try {
       const me = await api.getWorkerProfile();
       setProfile(me);
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") throw new ApiError(0, "Location permission is required");
-      const pos = await Location.getCurrentPositionAsync({});
-      setJobs(await api.nearbyJobs(pos.coords.latitude, pos.coords.longitude, me.trade));
+      // This screen collects no address, but the worker already told us where
+      // they are based when they set up their profile — that is the right
+      // centre for "jobs near me" when live location is unavailable.
+      const { lat, lng, source } = await resolveCoords({
+        saved: { lat: me.base_lat, lng: me.base_lng },
+        unavailableMessage:
+          "Allow location access to see jobs around you, or set your base location in your worker profile.",
+      });
+      setUsingBaseLocation(source === "saved");
+      setJobs(await api.nearbyJobs(lat, lng, me.trade));
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         setProfile(null);
@@ -100,6 +109,11 @@ export default function NearbyJobsScreen() {
       )}
 
       <ErrorText message={error} />
+      <NoticeText
+        message={
+          usingBaseLocation ? "Showing jobs around your saved base location." : null
+        }
+      />
 
       {profile !== null && jobs.length === 0 && !error && (
         <EmptyState

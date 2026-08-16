@@ -65,3 +65,20 @@ services:
       # relies on polling, which is correct but slower.
       - key: TOOLBELT_STRIPE_WEBHOOK_SECRET
         sync: false
+
+      # Twilio, for phone verification. Without these a worker cannot verify a
+      # phone, which blocks vetting and therefore every job notification — the
+      # marketplace has no supply side. The API still boots and logs an error;
+      # it does not refuse to start, because jobs and payments work regardless.
+      #
+      # Prefer the Messaging Service SID over a bare From number in prod: it
+      # owns the number pool, opt-out handling, and the A2P campaign
+      # registration US carriers require for application-sent SMS.
+      - key: TOOLBELT_TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TOOLBELT_TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TOOLBELT_TWILIO_MESSAGING_SERVICE_SID
+        sync: false
+      - key: TOOLBELT_TWILIO_FROM_NUMBER
+        sync: false

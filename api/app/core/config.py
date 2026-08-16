@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     # is on, and a wildcard with credentials is how a hostile page reads a
     # logged-in user's data.
     web_app_origins: str = ""
+    # SMS, for phone verification. Unset means dev logs codes to an outbox and
+    # prod cannot verify anyone — which blocks worker vetting and therefore all
+    # job notifications, so this is supply-side infrastructure, not a nicety.
+    #
+    # Set the Messaging Service SID in prod rather than a bare From number: it
+    # owns the number pool, opt-out handling and the campaign registration US
+    # carriers require. A From number is fine for a trial account.
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""
+    twilio_messaging_service_sid: str = ""
     # Payments
     # Country and currency used when provisioning a worker's Stripe Connect
     # account. Single-country for now; becomes per-worker at second-market.

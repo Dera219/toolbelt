@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.core.db import Base, engine
 from app.modules.identity import models as identity_models  # noqa: F401  (register tables)
 from app.modules.identity.router import router as identity_router
+from app.modules.identity.sms import SmsDeliveryError, SmsNotConfigured
 from app.modules.jobs import models as jobs_models  # noqa: F401  (register tables)
 from app.modules.jobs.router import router as jobs_router
 from app.modules.chat import models as chat_models  # noqa: F401  (register tables)
@@ -31,8 +32,10 @@ async def lifespan(_app: FastAPI):
     if get_settings().environment != "prod":
         Base.metadata.create_all(engine)
     from app.modules.identity.oidc import check_signing_support
+    from app.modules.identity.sms import check_sms_configured
 
     check_signing_support()
+    check_sms_configured()
     yield
 
 
@@ -103,6 +106,28 @@ async def provider_error_handler(_request: Request, exc: ProviderError):
     return JSONResponse(
         status_code=status.HTTP_502_BAD_GATEWAY,
         content={"detail": "Payment provider is unavailable. Please try again."},
+    )
+
+
+@app.exception_handler(SmsNotConfigured)
+async def sms_not_configured_handler(_request: Request, exc: SmsNotConfigured):
+    """No provider wired: the capability is absent, not broken. 503 matches how
+    the unset Stripe webhook route behaves rather than reporting a crash."""
+    logging.getLogger(__name__).error("phone verification unavailable: %s", exc)
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Phone verification is unavailable right now."},
+    )
+
+
+@app.exception_handler(SmsDeliveryError)
+async def sms_delivery_error_handler(_request: Request, exc: SmsDeliveryError):
+    """An upstream fault. The detail is logged and not returned — provider
+    messages echo the recipient's number back."""
+    logging.getLogger(__name__).warning("sms delivery failed: %s", exc, exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        content={"detail": "Could not send the code. Please try again."},
     )
 
 

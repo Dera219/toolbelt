@@ -7,6 +7,7 @@ bug — it looks like a marketplace with no workers in it.
 """
 
 import urllib.error
+from base64 import b64encode
 
 import pytest
 
@@ -92,6 +93,96 @@ class TestConfiguration:
         # the first real request instead of at startup.
         use_settings(monkeypatch, twilio_account_sid=SID, twilio_auth_token=TOKEN)
         assert sms_is_configured() is False
+
+
+class TestApiKeyCredentials:
+    """An API key is the preferred credential: revocable on its own, and
+    restrictable to creating Messages so a leak cannot read history or spend the
+    balance. The account auth token can do all of that and rotating it breaks
+    every other integration at once."""
+
+    KEY_SID = "SK" + "1" * 32
+    KEY_SECRET = "key-secret-value"
+
+    def test_an_api_key_pair_counts_as_configured(self, monkeypatch):
+        use_settings(
+            monkeypatch,
+            twilio_account_sid=SID,
+            twilio_api_key_sid=self.KEY_SID,
+            twilio_api_key_secret=self.KEY_SECRET,
+            twilio_from_number="+15005550006",
+        )
+        # Note: no auth token at all.
+        assert sms_is_configured() is True
+
+    def test_authenticates_as_the_key_but_addresses_the_account(self, monkeypatch):
+        seen = capture_urlopen(monkeypatch)
+        TwilioSmsSender(
+            SID,
+            "",
+            api_key_sid=self.KEY_SID,
+            api_key_secret=self.KEY_SECRET,
+            from_number="+15005550006",
+        ).send(PHONE, "code 123456")
+
+        # The SID stays in the path while the key authenticates. Swapping them
+        # yields a 404 on a URL that looks entirely plausible.
+        assert seen["url"] == f"https://api.twilio.com/2010-04-01/Accounts/{SID}/Messages.json"
+        expected = b64encode(f"{self.KEY_SID}:{self.KEY_SECRET}".encode()).decode()
+        assert seen["headers"]["authorization"] == f"Basic {expected}"
+
+    def test_an_api_key_wins_over_an_auth_token(self, monkeypatch):
+        seen = capture_urlopen(monkeypatch)
+        TwilioSmsSender(
+            SID,
+            TOKEN,
+            api_key_sid=self.KEY_SID,
+            api_key_secret=self.KEY_SECRET,
+            from_number="+15005550006",
+        ).send(PHONE, "code 123456")
+
+        expected = b64encode(f"{self.KEY_SID}:{self.KEY_SECRET}".encode()).decode()
+        assert seen["headers"]["authorization"] == f"Basic {expected}"
+
+    def test_the_auth_token_still_works_when_no_key_is_set(self, monkeypatch):
+        seen = capture_urlopen(monkeypatch)
+        TwilioSmsSender(SID, TOKEN, from_number="+15005550006").send(PHONE, "code")
+
+        expected = b64encode(f"{SID}:{TOKEN}".encode()).decode()
+        assert seen["headers"]["authorization"] == f"Basic {expected}"
+
+    @pytest.mark.parametrize(
+        "api_key_sid,api_key_secret",
+        [(KEY_SID, ""), ("", KEY_SECRET)],
+    )
+    def test_refuses_half_an_api_key_pair(self, api_key_sid, api_key_secret):
+        # Silently falling back to the auth token here would mean a key the
+        # operator believes is in use is not, and revoking it would change
+        # nothing.
+        with pytest.raises(SmsNotConfigured):
+            TwilioSmsSender(
+                SID,
+                TOKEN,
+                api_key_sid=api_key_sid,
+                api_key_secret=api_key_secret,
+                from_number="+15005550006",
+            )
+
+    def test_the_api_key_secret_never_reaches_the_logs(self, monkeypatch, caplog):
+        def fake_urlopen(request, timeout=None):
+            raise urllib.error.URLError("connection refused")
+
+        monkeypatch.setattr(sms_module.urllib.request, "urlopen", fake_urlopen)
+        with caplog.at_level("DEBUG"), pytest.raises(SmsDeliveryError):
+            TwilioSmsSender(
+                SID,
+                "",
+                api_key_sid=self.KEY_SID,
+                api_key_secret=self.KEY_SECRET,
+                from_number="+15005550006",
+            ).send(PHONE, "code")
+
+        assert self.KEY_SECRET not in caplog.text
 
 
 class TestSenderSelection:

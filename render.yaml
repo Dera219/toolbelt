@@ -76,6 +76,15 @@ services:
       # registration US carriers require for application-sent SMS.
       - key: TOOLBELT_TWILIO_ACCOUNT_SID
         sync: false
+      # Prefer an API key over the account auth token: it is revocable on its
+      # own and can be restricted to creating Messages and nothing else, so a
+      # leak cannot read message history, buy numbers or spend the balance.
+      # The auth token can do all of that, and rotating it breaks every other
+      # integration at once. Set the key pair OR the auth token, not both.
+      - key: TOOLBELT_TWILIO_API_KEY_SID
+        sync: false
+      - key: TOOLBELT_TWILIO_API_KEY_SECRET
+        sync: false
       - key: TOOLBELT_TWILIO_AUTH_TOKEN
         sync: false
       - key: TOOLBELT_TWILIO_MESSAGING_SERVICE_SID

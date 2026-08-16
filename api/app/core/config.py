@@ -55,7 +55,15 @@ class Settings(BaseSettings):
     # Set the Messaging Service SID in prod rather than a bare From number: it
     # owns the number pool, opt-out handling and the campaign registration US
     # carriers require. A From number is fine for a trial account.
+    # The account SID identifies the account and is always required — it is in
+    # the request path, not the credentials.
     twilio_account_sid: str = ""
+    # Prefer an API key over the account auth token. A key is revocable on its
+    # own and can be restricted to creating Messages and nothing else, so a leak
+    # cannot read message history, buy numbers, or spend the balance. The auth
+    # token can do all of that and rotating it breaks every other integration.
+    twilio_api_key_sid: str = ""
+    twilio_api_key_secret: str = ""
     twilio_auth_token: str = ""
     twilio_from_number: str = ""
     twilio_messaging_service_sid: str = ""

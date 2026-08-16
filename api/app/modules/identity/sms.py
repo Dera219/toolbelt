@@ -85,25 +85,39 @@ class TwilioSmsSender:
         account_sid: str,
         auth_token: str,
         *,
+        api_key_sid: str = "",
+        api_key_secret: str = "",
         from_number: str = "",
         messaging_service_sid: str = "",
         timeout: float = 10.0,
     ) -> None:
-        if not account_sid or not auth_token:
-            raise SmsNotConfigured("Twilio account SID and auth token are both required")
+        if not account_sid:
+            raise SmsNotConfigured("A Twilio account SID is required")
+        # An API key authenticates as SK…:secret while the account SID stays in
+        # the request path — the two are not interchangeable, and swapping them
+        # produces a 404 on a URL that looks plausible.
+        if api_key_sid and not api_key_secret:
+            raise SmsNotConfigured("A Twilio API key SID needs its secret")
+        if api_key_secret and not api_key_sid:
+            raise SmsNotConfigured("A Twilio API key secret needs its key SID")
+        if not api_key_sid and not auth_token:
+            raise SmsNotConfigured(
+                "Provide either a Twilio API key pair or the account auth token"
+            )
         if not from_number and not messaging_service_sid:
             raise SmsNotConfigured(
                 "Set either a Twilio Messaging Service SID or a From number"
             )
         self._account_sid = account_sid
-        self._auth_token = auth_token
+        self._username = api_key_sid or account_sid
+        self._password = api_key_secret or auth_token
         self._from_number = from_number
         self._messaging_service_sid = messaging_service_sid
         self._timeout = timeout
 
     @property
     def _auth_header(self) -> str:
-        raw = f"{self._account_sid}:{self._auth_token}".encode()
+        raw = f"{self._username}:{self._password}".encode()
         return f"Basic {b64encode(raw).decode()}"
 
     def send(self, phone: str, message: str) -> None:
@@ -163,9 +177,13 @@ _dev_sender = DevSmsSender()
 
 def sms_is_configured() -> bool:
     settings = get_settings()
+    has_credentials = bool(
+        (settings.twilio_api_key_sid and settings.twilio_api_key_secret)
+        or settings.twilio_auth_token
+    )
     return bool(
         settings.twilio_account_sid
-        and settings.twilio_auth_token
+        and has_credentials
         and (settings.twilio_from_number or settings.twilio_messaging_service_sid)
     )
 
@@ -182,8 +200,10 @@ def check_sms_configured() -> None:
     logger.error(
         "No SMS provider configured in prod. Phone verification will fail, which "
         "blocks worker vetting and therefore all job notifications. Set "
-        "TOOLBELT_TWILIO_ACCOUNT_SID, TOOLBELT_TWILIO_AUTH_TOKEN and either "
-        "TOOLBELT_TWILIO_MESSAGING_SERVICE_SID or TOOLBELT_TWILIO_FROM_NUMBER."
+        "TOOLBELT_TWILIO_ACCOUNT_SID, credentials (either "
+        "TOOLBELT_TWILIO_API_KEY_SID + TOOLBELT_TWILIO_API_KEY_SECRET, preferred, "
+        "or TOOLBELT_TWILIO_AUTH_TOKEN), and a sender (either "
+        "TOOLBELT_TWILIO_MESSAGING_SERVICE_SID or TOOLBELT_TWILIO_FROM_NUMBER)."
     )
 
 
@@ -193,6 +213,8 @@ def get_sms_sender() -> SmsSender:
         return TwilioSmsSender(
             settings.twilio_account_sid,
             settings.twilio_auth_token,
+            api_key_sid=settings.twilio_api_key_sid,
+            api_key_secret=settings.twilio_api_key_secret,
             from_number=settings.twilio_from_number,
             messaging_service_sid=settings.twilio_messaging_service_sid,
         )

@@ -45,7 +45,7 @@ export default function NearbyJobsScreen() {
           "Allow location access to see jobs around you, or set your base location in your worker profile.",
       });
       setUsingBaseLocation(source === "saved");
-      setJobs(await api.nearbyJobs(lat, lng, me.trade));
+      setJobs(await api.nearbyJobs(lat, lng, me.trade, me.service_radius_km));
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         setProfile(null);

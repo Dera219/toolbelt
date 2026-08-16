@@ -173,11 +173,19 @@ export const api = {
     customer_provides_supplies: boolean;
   }) => request<Job>("POST", "/jobs", body),
   myJobs: () => request<Job[]>("GET", "/jobs/mine"),
-  nearbyJobs: (lat: number, lng: number, trade?: string) =>
-    request<NearbyJob[]>(
+  nearbyJobs: (lat: number, lng: number, trade?: string, radiusKm?: number) => {
+    // Omit a missing or nonsensical radius rather than sending it: the API
+    // rejects radius_km <= 0, and falling back to its default beats a 422 that
+    // would empty the whole screen. The server caps the value it accepts.
+    const radiusParam =
+      radiusKm != null && Number.isFinite(radiusKm) && radiusKm > 0
+        ? `&radius_km=${radiusKm}`
+        : "";
+    return request<NearbyJob[]>(
       "GET",
-      `/jobs/nearby?lat=${lat}&lng=${lng}${trade ? `&trade=${trade}` : ""}`
-    ),
+      `/jobs/nearby?lat=${lat}&lng=${lng}${trade ? `&trade=${encodeURIComponent(trade)}` : ""}${radiusParam}`
+    );
+  },
   job: (id: number) => request<Job>("GET", `/jobs/${id}`),
   startJob: (id: number) => request<Job>("POST", `/jobs/${id}/start`),
   completeJob: (id: number) => request<Job>("POST", `/jobs/${id}/complete`),

@@ -1,6 +1,10 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    // Named explicitly because automatic @types discovery does not pick up the
+    // Jest globals under this base config's module settings, which leaves every
+    // describe/it/expect in the test files reported as an undefined name.
+    "types": ["jest", "node", "react"]
   }
 }

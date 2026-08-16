@@ -9,15 +9,52 @@ sys.path.insert(0, str(_API_DIR))
 # Postgres is what production runs, so the suite should be able to run there
 # too: set TOOLBELT_TEST_DATABASE_URL to point at one. SQLite stays the default
 # because it needs no server and keeps the suite fast.
-_TEST_DB = _TESTS_DIR / "test_toolbelt.db"
+# One database file per process, because this checkout is shared. The name used
+# to be fixed, and every run deleted it at import — so a second pytest started
+# while the first was mid-suite pulled the schema out from under it. That
+# surfaces as dozens of "no such table" failures scattered across unrelated
+# files, which reads exactly like a real regression and is not one.
+_TEST_DB = _TESTS_DIR / f"test_toolbelt.{os.getpid()}.db"
 _PG_URL = os.environ.get("TOOLBELT_TEST_DATABASE_URL", "").strip()
+
+
+def _process_alive(pid: int) -> bool:
+    """PermissionError means the process exists and is not ours — still alive."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def _sweep_abandoned_databases() -> None:
+    """Delete databases left by runs that are no longer running.
+
+    Stale schema silently poisons a suite, so leftovers still have to go — but
+    only the ones nobody is using. Anything belonging to a live process is left
+    strictly alone.
+    """
+    for leftover in _TESTS_DIR.glob("test_toolbelt.*"):
+        parts = leftover.name.split(".")
+        # test_toolbelt.<pid>.db, plus SQLite's -wal and -shm siblings.
+        owner = next((p for p in parts if p.isdigit()), None)
+        if owner is not None and _process_alive(int(owner)):
+            continue
+        try:
+            leftover.unlink()
+        except OSError:
+            # A concurrent sweep got there first. Nothing to do.
+            pass
+
+
 if _PG_URL:
     os.environ["TOOLBELT_DATABASE_URL"] = _PG_URL
 else:
-    # Start every session from an empty file. A database left behind by an
-    # interrupted run has stale schema and silently poisons the whole suite.
-    for _leftover in _TEST_DB.parent.glob(_TEST_DB.name + "*"):
-        _leftover.unlink()
+    _sweep_abandoned_databases()
     os.environ["TOOLBELT_DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
 os.environ["TOOLBELT_JWT_SECRET"] = "test-secret-not-for-prod-0123456789abcdef"
 os.environ["TOOLBELT_ENVIRONMENT"] = "test"

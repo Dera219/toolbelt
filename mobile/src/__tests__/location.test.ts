@@ -45,9 +45,33 @@ function grantGps(lat: number, lng: number) {
   } as never);
 }
 
+/**
+ * Make both geocoders answer, because which one runs depends on the platform.
+ *
+ * `geocodeAddress` only consults the OS geocoder off web; on web it goes
+ * straight to the hosted one. A test that mocks just `Location.geocodeAsync` is
+ * therefore a native-only test wearing a platform-agnostic name — and under the
+ * web project it silently reached the real Photon service over the network.
+ */
+function geocoderReturns(lat: number, lng: number) {
+  mockLocation.geocodeAsync.mockResolvedValue([{ latitude: lat, longitude: lng }] as never);
+  global.fetch = jest.fn(async () => ({
+    ok: true,
+    status: 200,
+    // GeoJSON orders coordinates [longitude, latitude].
+    json: async () => ({ features: [{ geometry: { coordinates: [lng, lat] } }] }),
+  })) as unknown as typeof fetch;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockLocation.geocodeAsync.mockResolvedValue([] as never);
+  // Re-arm the network denial after clearAllMocks wipes the one from
+  // jest.setup.ts. Without this the suite passes or fails based on whether the
+  // machine running it has internet, which is not a test.
+  global.fetch = jest.fn(async () => {
+    throw new Error("Unmocked fetch in a location test");
+  }) as unknown as typeof fetch;
 });
 
 describe("source preference", () => {
@@ -64,9 +88,7 @@ describe("source preference", () => {
 
   it("falls back to the typed address when permission is denied", async () => {
     denyGps();
-    mockLocation.geocodeAsync.mockResolvedValue([
-      { latitude: UMD.lat, longitude: UMD.lng },
-    ] as never);
+    geocoderReturns(UMD.lat, UMD.lng);
 
     await expect(
       resolveCoords({ address: "College Park MD", unavailableMessage: MESSAGE })
@@ -83,9 +105,7 @@ describe("source preference", () => {
 
   it("prefers a geocoded address over a stale saved location", async () => {
     denyGps();
-    mockLocation.geocodeAsync.mockResolvedValue([
-      { latitude: 39.29, longitude: -76.61 },
-    ] as never);
+    geocoderReturns(39.29, -76.61);
 
     const result = await resolveCoords({
       address: "Baltimore MD",
@@ -124,6 +144,8 @@ describe("failure is reported, not thrown from underneath", () => {
   it("survives an OS geocoder that throws, e.g. Android without Play services", async () => {
     denyGps();
     mockLocation.geocodeAsync.mockRejectedValue(new Error("E_NO_GEOCODER"));
+    // The hosted geocoder is denied by the default beforeEach, which is what
+    // makes this meaningful on web where geocodeAsync is never reached.
 
     await expect(
       resolveCoords({ address: "College Park MD", saved: UMD, unavailableMessage: MESSAGE })
@@ -222,8 +244,9 @@ describe("geocoder frugality", () => {
     ).rejects.toBeInstanceOf(ApiError);
 
     expect(mockLocation.geocodeAsync).not.toHaveBeenCalled();
-    // Nor should the hosted geocoder have been reached; the default fetch in
-    // jest.setup.ts throws, so a stray call would surface here as a failure.
+    // And on web, where geocodeAsync is never consulted at all, the network is
+    // the only thing worth asserting on.
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it("does not geocode an address that is only whitespace", async () => {
@@ -234,5 +257,6 @@ describe("geocoder frugality", () => {
     ).resolves.toEqual({ ...UMD, source: "saved" });
 
     expect(mockLocation.geocodeAsync).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

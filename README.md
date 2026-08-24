@@ -1,19 +1,47 @@
 # ToolBelt
 
-On-demand marketplace connecting customers with blue-collar workers — Uber for local
-trades. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design and roadmap.
+An on-demand marketplace connecting customers with blue-collar workers — job
+posting, geo matching, offers, a job lifecycle state machine, masked in-app
+chat, double-blind ratings, and a full money loop with a double-entry ledger.
+FastAPI + Postgres on the server, one Expo app for iOS, Android and web.
 
-## Status
+**Live:** the API is deployed at [api.toolbelt.biz](https://api.toolbelt.biz/health)
+and the web client at [app.toolbelt.biz](https://app.toolbelt.biz). Both are on
+free instances that sleep when idle, so the first request can take 50 seconds.
 
-Phases 0–2 complete: auth, worker profiles, job posting, geo search, offers, job
-lifecycle state machine, double-blind ratings, phone OTP, vetting pipeline, masked
-in-app chat, and the full money loop (authorize on accept → capture on completion →
-payout minus 15% fee, double-entry ledger, signed idempotent webhooks, refunds).
-Payments run against a fake provider in dev/test; Stripe Connect is implemented
-behind the same interface and activates when `TOOLBELT_STRIPE_SECRET_KEY` is set.
+**225 API tests, 206 mobile tests across four platforms, CI on both plus a real
+Postgres.** The money loop has been exercised against live Stripe rather than
+only against the fake provider.
 
-Database migrations are managed with Alembic (`cd api && .venv/bin/alembic upgrade
-head`). Local Postgres + Redis: `docker compose -f infra/docker-compose.yml up -d`.
+## What is actually finished, and what is not
+
+Honesty about this is cheaper than being caught by it, so:
+
+**Working end to end.** Auth including social sign-in, worker profiles, job
+posting and geo search, offers, the job lifecycle, in-app chat, ratings, and the
+money path — authorize on accept, capture on completion, payout minus a 15% fee,
+double-entry ledger, signed idempotent webhooks, refunds with transfer reversal.
+Every provider call goes through a journal that records intent before the call,
+so a crash mid-payment is recoverable rather than ambiguous.
+
+**Blocked, and worth stating plainly: a worker cannot finish signup on the live
+API.** Vetting requires a verified phone, phone verification requires SMS, and
+the Twilio account behind it is on a trial tier that only permits predefined
+message templates. The integration is written and tested — a restricted API key
+authenticates and Twilio accepts the request — and it stops at that policy. It
+needs a paid Twilio account, not more code.
+
+**Built but never observed: Android push.** The Firebase project, the FCM V1
+credentials and the APK all exist and every link upstream of the handset is
+verified. No notification has ever actually arrived on a phone, because there
+is no Android device to receive one. Treat it as plausible, not working.
+
+## Architecture
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the system design and roadmap, and
+[DEPLOY.md](DEPLOY.md) for the deployment. Database migrations are managed with
+Alembic (`cd api && .venv/bin/alembic upgrade head`); local Postgres and Redis
+come up with `docker compose -f infra/docker-compose.yml up -d`.
 
 **Mobile app** (`mobile/`, Expo SDK 57 + TypeScript): one app, two modes — Hiring
 (post jobs, review offers, accept & pay, chat, rate) and Working (profile + vetting,
@@ -25,9 +53,15 @@ npm install
 npx expo start
 ```
 
-Scan the QR with Expo Go. On a physical device, set your machine's LAN IP in
-`mobile/src/config.ts` first. In dev, phone-verification codes are readable at
-`GET /dev/sms-outbox` (dev environment only).
+Scan the QR with Expo Go. No configuration is needed on a physical device —
+`src/config.ts` derives the API host from the Metro server Expo already told the
+app about. Set `EXPO_PUBLIC_API_URL` only to point somewhere else deliberately.
+
+Expo Go cannot receive push notifications (removed in SDK 53); that needs a real
+build. See [mobile/BUILDS.md](mobile/BUILDS.md), which also documents the two
+traps that make push look broken when it is not.
+
+In dev, phone-verification codes are readable at `GET /dev/sms-outbox`.
 
 ## Run the API
 
@@ -43,9 +77,18 @@ Interactive API docs: http://127.0.0.1:8000/docs
 ## Run the tests
 
 ```bash
-cd api
-.venv/bin/python -m pytest tests -q
+cd api && .venv/bin/python -m pytest -q
 ```
+
+```bash
+cd mobile && npm test
+```
+
+The mobile suite runs under four Jest projects — iOS, Android, web and node —
+because `src/payments/sheet.ts` and `sheet.native.ts` are resolved by platform,
+and the web variant is the only thing keeping Stripe's native SDK out of the web
+bundle. A single-platform run would not notice if that broke. CI runs both
+suites, and the API suite a second time against a real Postgres.
 
 ## Configuration
 
@@ -60,6 +103,16 @@ Environment variables (prefix `TOOLBELT_`, or an `api/.env` file):
 | `TOOLBELT_STRIPE_PUBLISHABLE_KEY` | unset | Returned to the app for the native payment sheet; public by design |
 | `TOOLBELT_PAYMENTS_WEBHOOK_SECRET` | dev-only value | HMAC key for `/webhooks/payments` |
 | `TOOLBELT_PLATFORM_FEE_BPS` | `1500` | Platform take-rate in basis points |
+| `TOOLBELT_WEB_APP_ORIGINS` | unset | Browser origins allowed cross-origin. Unset = no browser client. Never a wildcard |
+| `TOOLBELT_TWILIO_ACCOUNT_SID` | unset | Always required for SMS; it is in the request path, not the credentials |
+| `TOOLBELT_TWILIO_API_KEY_SID` / `_SECRET` | unset | Preferred credential — revocable alone, restrictable to creating Messages |
+| `TOOLBELT_TWILIO_AUTH_TOKEN` | unset | Alternative to the key pair. Can do everything; rotating it breaks every integration |
+| `TOOLBELT_TWILIO_MESSAGING_SERVICE_SID` | unset | Preferred sender in prod — owns the number pool and opt-out handling |
+| `TOOLBELT_TWILIO_FROM_NUMBER` | unset | Alternative sender. Fine for a trial account |
+
+Without SMS credentials the API still starts and logs an error: jobs, offers and
+payments all work, and only phone verification fails. Refusing to boot would
+trade a broken signup for an outage.
 
 ## Social sign-in setup
 

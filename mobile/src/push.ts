@@ -32,13 +32,33 @@ export function currentPushToken(): string | null {
 }
 
 /**
+ * Deliberate escape hatch for verifying push without owning an Android phone.
+ *
+ * `Device.isDevice` is false on an emulator, and the guard below uses it because
+ * an iOS Simulator genuinely cannot receive a remote notification. An **Android**
+ * emulator running a Google Play services image can: it registers with FCM and
+ * receives normally. So this guard, and nothing else, is what stands between a
+ * developer with no test handset and an end-to-end verification of the whole
+ * push chain.
+ *
+ * Two locks, because a production build that registers emulator tokens would be
+ * a real defect: `__DEV__` is false in any release build, and the variable must
+ * be set on purpose. Neither alone would be enough.
+ *
+ *     EXPO_PUBLIC_ALLOW_EMULATOR_PUSH=1 npx expo start
+ */
+function emulatorPushAllowed(): boolean {
+  return __DEV__ && process.env.EXPO_PUBLIC_ALLOW_EMULATOR_PUSH === "1";
+}
+
+/**
  * Ask for permission, fetch the Expo push token, and register it with the API.
  * Returns null when push is unavailable — a simulator, a denied prompt, or a
  * missing project id. Never throws: no notification is worth blocking login.
  */
 export async function registerForPush(): Promise<string | null> {
   try {
-    if (!Device.isDevice) {
+    if (!Device.isDevice && !emulatorPushAllowed()) {
       // Simulators cannot receive push. Not an error, just nothing to do.
       return null;
     }

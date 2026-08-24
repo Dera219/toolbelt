@@ -171,3 +171,48 @@ describe("unregistration", () => {
     expect(currentPushToken()).toBeNull();
   });
 });
+
+describe("the emulator escape hatch", () => {
+  /**
+   * An Android emulator on a Play services image can register with FCM and
+   * receive normally, so this guard is the only thing between a developer with
+   * no test handset and verifying the whole chain. It has two locks because a
+   * release build registering emulator tokens would be a real defect.
+   */
+  const ORIGINAL = process.env.EXPO_PUBLIC_ALLOW_EMULATOR_PUSH;
+
+  afterEach(() => {
+    process.env.EXPO_PUBLIC_ALLOW_EMULATOR_PUSH = ORIGINAL;
+    (globalThis as { __DEV__?: boolean }).__DEV__ = true;
+  });
+
+  it("registers on an emulator when explicitly opted in during development", async () => {
+    (globalThis as { __DEV__?: boolean }).__DEV__ = true;
+    process.env.EXPO_PUBLIC_ALLOW_EMULATOR_PUSH = "1";
+    (Device as { isDevice: boolean }).isDevice = false;
+    granted();
+
+    await expect(registerForPush()).resolves.toBe(TOKEN);
+  });
+
+  it("stays closed on an emulator without the opt-in", async () => {
+    (globalThis as { __DEV__?: boolean }).__DEV__ = true;
+    delete process.env.EXPO_PUBLIC_ALLOW_EMULATOR_PUSH;
+    (Device as { isDevice: boolean }).isDevice = false;
+    granted();
+
+    // Default behaviour must be unchanged: opting in has to be deliberate.
+    await expect(registerForPush()).resolves.toBeNull();
+  });
+
+  it("stays closed in a release build even when the variable is set", async () => {
+    (globalThis as { __DEV__?: boolean }).__DEV__ = false;
+    process.env.EXPO_PUBLIC_ALLOW_EMULATOR_PUSH = "1";
+    (Device as { isDevice: boolean }).isDevice = false;
+    granted();
+
+    // The lock that actually matters. A shipped build must never register a
+    // token for a device that cannot receive anything.
+    await expect(registerForPush()).resolves.toBeNull();
+  });
+});

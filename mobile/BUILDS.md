@@ -149,6 +149,34 @@ you want that build against production:
 EXPO_PUBLIC_API_URL=https://api.toolbelt.biz npx expo start --dev-client
 ```
 
+## Verifying push without owning an Android phone
+
+An **Android emulator running a Google Play services image can receive FCM push**
+— it registers normally. The only thing stopping it is our own guard:
+`registerForPush()` returns null on `!Device.isDevice`, which is correct for an
+iOS Simulator (genuinely cannot receive remote notifications) and wrong for an
+Android emulator.
+
+So there is a deliberate escape hatch, behind two locks:
+
+```bash
+EXPO_PUBLIC_ALLOW_EMULATOR_PUSH=1 npx expo start --dev-client
+```
+
+It requires `__DEV__` **and** the variable. A release build ignores it entirely
+even if the variable is set — a shipped app registering tokens for devices that
+cannot receive anything would be a real defect, and there are tests for both
+locks.
+
+You still need a Play-services emulator image: in Android Studio's Device
+Manager, pick a system image whose target says **"Google Play"**, not "Google
+APIs" and not the plain AOSP one. Without Play services there is no FCM to
+register with, and the token request simply fails.
+
+This is the cheapest way to prove the chain end to end. It is not a substitute
+for a real handset before shipping — delivery on physical devices involves
+battery optimisation and Doze behaviour an emulator never exercises.
+
 ## Verifying push actually works
 
 The live API is on Render's free tier and **spins down when idle — the first

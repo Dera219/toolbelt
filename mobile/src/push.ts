@@ -45,7 +45,18 @@ export function currentPushToken(): string | null {
  * a real defect: `__DEV__` is false in any release build, and the variable must
  * be set on purpose. Neither alone would be enough.
  *
- *     EXPO_PUBLIC_ALLOW_EMULATOR_PUSH=1 npx expo start
+ * **Set it in `mobile/.env`, not on the command line:**
+ *
+ *     EXPO_PUBLIC_ALLOW_EMULATOR_PUSH=1
+ *
+ * Prefixing `npx expo start` with the variable does NOT work on SDK 57, and
+ * fails in the way that costs an afternoon. Expo compiles every
+ * `process.env.EXPO_PUBLIC_*` read into a lookup on a virtual env module built
+ * from the `.env` file; a shell variable never reaches it. Worse, the shell
+ * value IS copied into the bundle's dev-only `process.env` shim, so grepping
+ * the bundle shows `value: "1"` and the wiring looks correct while
+ * `emulatorPushAllowed()` still reads undefined. The only honest check is the
+ * value this function actually sees at runtime.
  */
 function emulatorPushAllowed(): boolean {
   return __DEV__ && process.env.EXPO_PUBLIC_ALLOW_EMULATOR_PUSH === "1";

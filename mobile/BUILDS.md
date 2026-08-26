@@ -157,16 +157,41 @@ An **Android emulator running a Google Play services image can receive FCM push*
 iOS Simulator (genuinely cannot receive remote notifications) and wrong for an
 Android emulator.
 
-So there is a deliberate escape hatch, behind two locks:
+So there is a deliberate escape hatch, behind two locks. **Put the variable in
+`mobile/.env`** — it is a file, not a command-line prefix:
 
 ```bash
-EXPO_PUBLIC_ALLOW_EMULATOR_PUSH=1 npx expo start --dev-client
+# mobile/.env
+EXPO_PUBLIC_ALLOW_EMULATOR_PUSH=1
 ```
 
 It requires `__DEV__` **and** the variable. A release build ignores it entirely
 even if the variable is set — a shipped app registering tokens for devices that
 cannot receive anything would be a real defect, and there are tests for both
 locks.
+
+### The command-line form does not work, and lies about it
+
+This file used to say `EXPO_PUBLIC_ALLOW_EMULATOR_PUSH=1 npx expo start`. On
+SDK 57 that silently does nothing, and it is the reason push went unverified for
+so long.
+
+Expo compiles every `process.env.EXPO_PUBLIC_*` read into a lookup on a virtual
+env module built from the **`.env` file**. A shell variable never reaches it, so
+`emulatorPushAllowed()` sees `undefined` and `registerForPush()` returns null on
+the `!Device.isDevice` guard — no token, no error, no log, because that path is
+a plain `return null`.
+
+The trap is that the shell value *is* copied into the bundle's dev-only
+`process.env` shim, so `curl`-ing the bundle and grepping for the variable shows
+`value: "1"` and the wiring looks correct. It is not the object the compiled code
+reads. Do not treat the bundle as evidence — check what the function sees at
+runtime.
+
+Same applies to `EXPO_PUBLIC_API_URL`: setting it on the command line is ignored,
+so `src/config.ts` falls back to `http://10.0.2.2:8000` (the host machine's local
+API) on an Android emulator. If you meant to point the app at production, put it
+in `.env` too, or you will be testing against your laptop without noticing.
 
 You still need a Play-services emulator image: in Android Studio's Device
 Manager, pick a system image whose target says **"Google Play"**, not "Google

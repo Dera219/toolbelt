@@ -114,6 +114,19 @@ async function request<T>(method: string, path: string, body?: unknown, retry = 
     }
     throw new ApiError(resp.status, detail);
   }
+  // 204 No Content carries an empty body, and `resp.json()` on one throws
+  // SyntaxError. Three routes return it — /auth/logout and both device-token
+  // routes — so every caller typed `request<void>` was rejecting on a request
+  // that had already succeeded.
+  //
+  // The damage was not where it looked. `logout` wraps its call in `.catch(() => {})`
+  // so it appeared fine, but `registerForPush` does not: the throw skipped
+  // `cachedToken = token`, leaving it null forever, which made `unregisterPush`
+  // (guarded on that value) a permanent no-op. Logging out never released the
+  // device server-side, so the next person to sign in on the same phone kept
+  // receiving the previous user's job alerts — the exact thing `logout` unregisters
+  // to prevent.
+  if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
 }
 

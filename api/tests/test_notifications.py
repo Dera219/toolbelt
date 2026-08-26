@@ -5,7 +5,15 @@ about every job trains them to mute notifications, and a marketplace that pings
 nobody has no liquidity. These tests pin who gets told what.
 """
 
-from app.modules.notifications.push import _dev_sender
+import json
+
+from app.modules.notifications import push as push_module
+from app.modules.notifications.push import (
+    EXPO_PUSH_URL,
+    ExpoPushSender,
+    PushMessage,
+    _dev_sender,
+)
 from tests.conftest import (
     UMD,
     BALTIMORE,
@@ -225,3 +233,68 @@ def test_push_failure_never_breaks_the_booking(client, clean_db, monkeypatch):
         headers=cust,
     )
     assert resp.status_code == 201, "job creation must survive a push failure"
+
+
+class TestExpoPayload:
+    """What ExpoPushSender actually puts on the wire.
+
+    Previously unasserted, which is how a missing `channelId` shipped: every
+    notification arrived on Expo's fallback channel instead of the "Job alerts"
+    channel the app creates, and nothing in the suite noticed because the dev
+    sender never builds a payload at all.
+    """
+
+    def _capture(self, monkeypatch):
+        seen = {}
+
+        class FakeResponse:
+            def read(self) -> bytes:
+                return b'{"data":[{"status":"ok"}]}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            seen["url"] = request.full_url
+            seen["body"] = json.loads(request.data.decode())
+            return FakeResponse()
+
+        monkeypatch.setattr(push_module.urllib.request, "urlopen", fake_urlopen)
+        return seen
+
+    def test_names_the_android_channel_the_app_created(self, monkeypatch):
+        """Android routes by channel; a message naming none bypasses the app's own.
+
+        `mobile/src/push.ts` registers a channel with id "default" ("Job alerts",
+        IMPORTANCE_HIGH). Without this field the alert lands on
+        expo_notifications_fallback_notification_channel — confirmed on a real
+        device — so the user sees a generic category they cannot mute by name.
+        """
+        seen = self._capture(monkeypatch)
+        ExpoPushSender().send([PushMessage(to="ExpoPushToken[x]", title="T", body="B")])
+
+        assert seen["body"][0]["channelId"] == "default"
+
+    def test_carries_the_fields_expo_needs(self, monkeypatch):
+        seen = self._capture(monkeypatch)
+        ExpoPushSender().send(
+            [PushMessage(to="ExpoPushToken[x]", title="New job", body="near you", data={"job_id": 7})]
+        )
+
+        message = seen["body"][0]
+        assert seen["url"] == EXPO_PUSH_URL
+        assert message["to"] == "ExpoPushToken[x]"
+        assert message["title"] == "New job"
+        assert message["body"] == "near you"
+        assert message["data"] == {"job_id": 7}
+        assert message["sound"] == "default"
+
+    def test_sends_nothing_when_there_are_no_messages(self, monkeypatch):
+        """No recipients must not mean an empty POST to Expo."""
+        seen = self._capture(monkeypatch)
+        ExpoPushSender().send([])
+
+        assert seen == {}

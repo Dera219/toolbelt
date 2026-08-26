@@ -65,7 +65,21 @@ class ExpoPushSender:
         if not messages:
             return
         payload = [
-            {"to": m.to, "title": m.title, "body": m.body, "data": m.data, "sound": "default"}
+            {
+                "to": m.to,
+                "title": m.title,
+                "body": m.body,
+                "data": m.data,
+                "sound": "default",
+                # The app creates an Android channel called "default" ("Job alerts",
+                # IMPORTANCE_HIGH) in mobile/src/push.ts. Android routes by channel, and a
+                # message that names none is delivered on Expo's fallback channel instead —
+                # so the channel the app configured is bypassed, its HIGH importance does not
+                # apply, and the alert shows up under a generic category the user cannot
+                # recognise or mute by name. Verified against a real device: without this the
+                # notification arrives on expo_notifications_fallback_notification_channel.
+                "channelId": "default",
+            }
             for m in messages
         ]
         req = urllib.request.Request(

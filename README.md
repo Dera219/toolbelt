@@ -9,9 +9,16 @@ FastAPI + Postgres on the server, one Expo app for iOS, Android and web.
 and the web client at [app.toolbelt.biz](https://app.toolbelt.biz). Both are on
 free instances that sleep when idle, so the first request can take 50 seconds.
 
-**225 API tests, 206 mobile tests across four platforms, CI on both plus a real
-Postgres.** The money loop has been exercised against live Stripe rather than
-only against the fake provider.
+**228 API tests (plus 3 skipped) and 392 mobile tests across 34 suites on four
+platform projects, CI on both plus a real Postgres.** The money loop has been
+exercised against live Stripe rather than only against the fake provider.
+
+> **This is a portfolio deployment, not a production service.** It has no real
+> users and holds no real customer data; Stripe runs in test mode. Please do not
+> file vulnerability reports against `api.toolbelt.biz` as though it were
+> handling anyone's money. The code is published to be read.
+>
+> No licence is granted. All rights reserved — read it, don't ship it.
 
 ## What is actually finished, and what is not
 
@@ -31,10 +38,21 @@ message templates. The integration is written and tested — a restricted API ke
 authenticates and Twilio accepts the request — and it stops at that policy. It
 needs a paid Twilio account, not more code.
 
-**Built but never observed: Android push.** The Firebase project, the FCM V1
-credentials and the APK all exist and every link upstream of the handset is
-verified. No notification has ever actually arrived on a phone, because there
-is no Android device to receive one. Treat it as plausible, not working.
+**Android push: verified on an emulator, never on a handset.** Delivery works end
+to end — Firebase project, FCM V1 credentials, registration, send, and arrival —
+confirmed on an Android emulator running a Google Play services image. What
+remains unexercised is a physical device: Doze and manufacturer battery
+optimisation are exactly where push quietly dies, and neither has been tested
+here. Read it as working on emulator, unproven on hardware.
+
+An earlier version of this file claimed an emulator *cannot* register for FCM.
+That was wrong, and it cost months. An emulator on a Play services image
+registers fine; the blocker was this app's own `!Device.isDevice` guard —
+correct for the iOS Simulator, wrong for Android. The related trap: on Expo
+SDK 57 an `EXPO_PUBLIC_*` variable passed on the command line silently does
+nothing, because those reads compile against a virtual module built from `.env`.
+The dev shim still *displays* the value, so the wiring looks correct while the
+compiled code reads a different object. Put it in `.env`.
 
 ## Architecture
 

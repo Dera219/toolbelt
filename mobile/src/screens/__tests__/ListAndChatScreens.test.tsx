@@ -19,8 +19,9 @@
  * Harness facts these rely on are documented in JobDetailScreen.test.tsx.
  */
 
-import { fireEvent, screen, waitFor } from "@testing-library/react-native";
-import React from "react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react-native";
+import React, { type ReactElement } from "react";
+import type { RefreshControlProps } from "react-native";
 
 import { ApiError, api } from "../../api/client";
 import { useAuth } from "../../auth/AuthContext";
@@ -77,6 +78,29 @@ function job(id: number, title: string, overrides: Record<string, unknown> = {})
   };
 }
 
+/**
+ * Pull to refresh, the way a customer would.
+ *
+ * `fireEvent(scrollView, "refresh")` reads like the way to do this and does
+ * nothing: RNTL 14 looks for `onRefresh` on the ScrollView and its ancestors,
+ * but the handler lives on the RefreshControl element handed to it as a prop,
+ * so no handler is found and the call returns quietly. Firing at the
+ * RefreshControl's own host element does reach it, but fireEvent does not
+ * await an async handler, so whether the failed request has settled by the
+ * next line comes down to microtask ordering. Calling the handler directly,
+ * awaited inside `act`, runs the screen's own refresh to completion before
+ * anything is asserted.
+ */
+async function pullToRefresh() {
+  const owners = screen.container.queryAll((node) => node.props.refreshControl != null);
+  expect(owners).toHaveLength(1);
+  const { onRefresh } = (owners[0].props.refreshControl as ReactElement<RefreshControlProps>).props;
+  if (!onRefresh) throw new Error("The screen's RefreshControl has no onRefresh handler.");
+  await act(async () => {
+    await onRefresh();
+  });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockUseAuth.mockReturnValue({ user: { id: WORKER }, mode: "worker" } as never);
@@ -101,8 +125,11 @@ describe("the customer's job list", () => {
     // `setJobs(prev => prev ?? [])` on failure is deliberate: replacing a good
     // list with an empty one tells a customer their jobs are gone.
     mockApi.myJobs.mockRejectedValue(new ApiError(500, "boom"));
-    await fireEvent.press(screen.getByText("Deep clean"));
+    await pullToRefresh();
 
+    // The second call is what gives the last line its meaning. Without it,
+    // "Deep clean" is still on screen only because nothing tried to reload.
+    expect(mockApi.myJobs).toHaveBeenCalledTimes(2);
     expect(screen.getByText("Deep clean")).toBeTruthy();
   });
 });

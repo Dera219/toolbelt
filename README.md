@@ -5,18 +5,21 @@ posting, geo matching, offers, a job lifecycle state machine, masked in-app
 chat, double-blind ratings, and a full money loop with a double-entry ledger.
 FastAPI + Postgres on the server, one Expo app for iOS, Android and web.
 
-**Live:** the API is deployed at [api.toolbelt.biz](https://api.toolbelt.biz/health)
-and the web client at [app.toolbelt.biz](https://app.toolbelt.biz). Both are on
-free instances that sleep when idle, so the first request can take 50 seconds.
+**Hosting retired, September 2026.** The API ran at `api.toolbelt.biz` and the web
+client at `app.toolbelt.biz` from August 2026 on Render's free tier, where a free
+Postgres instance expires 30 days after creation. When it expired I let it go
+rather than pay to keep a demo with no users online, so **both endpoints are now
+down** and the marketing site at [toolbelt.biz](https://toolbelt.biz) is static.
+Nothing was lost: the database held only test accounts, and the schema rebuilds
+from the Alembic migrations. Run it locally with the instructions below.
 
 **228 API tests (plus 3 skipped) and 392 mobile tests across 34 suites on four
 platform projects, CI on both plus a real Postgres.** The money loop has been
 exercised against live Stripe rather than only against the fake provider.
 
-> **This is a portfolio deployment, not a production service.** It has no real
-> users and holds no real customer data; Stripe runs in test mode. Please do not
-> file vulnerability reports against `api.toolbelt.biz` as though it were
-> handling anyone's money. The code is published to be read.
+> **This was a portfolio deployment, not a production service.** It never had
+> real users or real customer data, and Stripe ran in test mode throughout. The
+> code is published to be read.
 >
 > No licence is granted. All rights reserved — read it, don't ship it.
 

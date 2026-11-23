@@ -3,7 +3,7 @@
 An on-demand marketplace connecting customers with blue-collar workers — job
 posting, geo matching, offers, a job lifecycle state machine, masked in-app
 chat, double-blind ratings, and a full money loop with a double-entry ledger.
-FastAPI + Postgres on the server, one Expo app for iOS, Android and web.
+FastAPI + Postgres on the server, one Expo app for Android and web (no iOS build was shipped).
 
 **Hosting retired, September 2026.** The API ran at `api.toolbelt.biz` and the web
 client at `app.toolbelt.biz` from August 2026 on Render's free tier, where a free
